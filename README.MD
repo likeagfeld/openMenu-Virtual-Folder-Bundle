@@ -21,7 +21,7 @@ To accommodate the new openMenu, a modified version of [GD MENU Card Manager](ht
 
 ## Current Version
 
-openMenu Virtual Folder Bundle is currently at at version [1.0](xxxx).
+openMenu Virtual Folder Bundle is currently at version [1.0](xxxx).
 
 ## Changelog
 
