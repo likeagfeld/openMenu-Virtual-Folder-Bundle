@@ -35,7 +35,7 @@ Many components of both openMenu and GD MENU Card Manager have been drastically 
 
 - New folder view mode, plus custom themes:
   * 8 subfolders max
-  * Complete subfolder path maximum length is 256 characters
+  * Complete subfolder path maximum length is 256 characters, including backslashes (e.g., `Games\JP\RPG`).
   * L Trigger + R Trigger is now a shortcut to go back one directory
 - Long entry names now supported (256 characters), along with marquee scrolling over those exceeding 49 characters.
 - Scroll mode improvements:
@@ -44,8 +44,7 @@ Many components of both openMenu and GD MENU Card Manager have been drastically 
   * Toggle artwork display (On/Off)
 - Settings menu now has wrap-around cursor scrolling.
 - GDEMU firmware version and openMenu build version now shown in the settings menu.
-- Save file is no longer written on every openMenu startup:
-  * Now only written when saving settings or during save file migration.
+- VMU configuration save file is no longer written on every openMenu startup, now only when saving settings or during save file migration.
 - Non-game discs are mounted by GDEMU instantly, returning user to BIOS for things like playing audio CDs.
 - Game ID is not sent to VM2/VMUPro/USB4MAPLE when a non-game disc is launched (e.g., an audio CD).
 - VMU beep setting disabled (feature is not implemented yet).
