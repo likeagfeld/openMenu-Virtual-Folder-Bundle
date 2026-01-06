@@ -37,7 +37,7 @@ Many components of both openMenu and GD MENU Card Manager have been drastically 
   * 8 subfolders max
   * Complete subfolder path maximum length is 256 characters
   * L + R is now a shortcut to go back one directory
-- Long entry names now supported, along with marquee scrolling over those exceeding 49 characters.
+- Long entry names now supported (256 characters), along with marquee scrolling over those exceeding 49 characters.
 - Settings menu now has wrap-around cursor scrolling.
 - Scroll mode improvements:
   * Jumping cursor fixed
