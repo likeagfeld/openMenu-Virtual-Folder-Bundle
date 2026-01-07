@@ -85,7 +85,7 @@ Many components of both openMenu and GD MENU Card Manager have been drastically 
 
 A full video tutorial has been provided on how to use **openMenu Virtual Folder Bundle**.
 
-<a href="xxx"><img width="400" src="https://github.com/DerekPascarella/openMenu-Virtual-Folder-Bundle/blob/main/images/thumbnail.png?raw=true"></a>
+<a href="https://youtu.be/YZtgtykCnM4"><img width="400" src="https://github.com/DerekPascarella/openMenu-Virtual-Folder-Bundle/blob/main/images/thumbnail.png?raw=true"></a>
 
 ## Restoring DAT Files
 
