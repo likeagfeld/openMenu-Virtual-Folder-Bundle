@@ -22,6 +22,7 @@ To accommodate the new openMenu, a modified version of [GD MENU Card Manager](ht
 - [Usage Tutorial](#usage-tutorial)
 - [Restoring DAT Files](#restoring-dat-files)
 - [Theme Format](#theme-format)
+- [Legal and Licensing](#legal-and-licensing)
 
 ## Current Version
 
@@ -165,3 +166,39 @@ For `BG_R.PNG`, navigate to **Tools → Set Global Index** and use the value `10
 To confirm newly generated PVRs are in the correct format, navigate to **Tools → Properties** and compare the texture settings for `BG_L.PVR` and `BG_R.PVR` match the default theme's textures in the `tools\openMenu\menu_data\theme\FOLDERS` folder.
 
 After that, open GD MENU Card Manager with GDEMU SD card inserted, then click **Save Changes**. The new theme will be accessible from the Settings menu while **Style** is set to `Folders`.
+
+## Legal and Licensing
+### openMenu
+This project includes a modified version of openMenu, which is:
+
+**Copyright © 2021, Hayden Kowalchuk**
+Licensed under the Modified BSD License (3-Clause BSD License)
+
+The original openMenu project was created by Hayden Kowalchuk (mrneo240), with subsequent forks and contributions by megavolt85 and sbstnc.
+
+**Modifications made by Derek Pascarella (ateam) in 2026:**
+- See the [Changes Since openMenu v1.3.0](#changes-since-openmenu-v130) section.
+
+For the full openMenu license text, see `./openMenu/LICENSE.md`.
+
+### GD MENU Card Manager
+This project includes a modified version of GD MENU Card Manager by sonik-br:
+
+**Original work**: Copyright (C) 2021, sonik-br
+**Original repository**: https://github.com/sonik-br/GDMENUCardManager
+Licensed under the GNU General Public License v3.0 (GPL-3.0)
+
+**Modifications made by Derek Pascarella (ateam) in 2026:**
+- See the [Changes Since GD MENU Card Manager v2.0.1](#changes-since-gd-menu-card-manager-v201) section.
+
+This modified version is also licensed under GPL-3.0. For the full license text, see `./GD Menu Card Manager/LICENSE`.
+
+**Source Code Availability**: Per GPL-3.0 requirements, the complete source code for GD MENU Card Manager is included in this distribution at `./GD Menu Card Manager/src/`.
+
+### Third-Party Components
+Both projects include additional third-party components with their own licenses:
+- DiscUtils (see `./GD Menu Card Manager/src/GDMENUCardManager.Core/DiscUtils/DiscUtils-LICENSE.txt`)
+- SevenZip library (LGPL v3)
+- Various libraries in `openMenu/external/` with their respective licenses
+
+All original copyright notices and licenses for these components have been preserved.
