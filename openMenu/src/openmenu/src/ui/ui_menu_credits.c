@@ -739,9 +739,9 @@ draw_menu_tr(void) {
         const int line_height = 32;
         const int width = 400;
         const int visible_options = MENU_OPTIONS - 5; /* Exclude SCROLL_ART, SCROLL_INDEX, FOLDERS_ART, MARQUEE_SPEED, and BEEP */
-        const int height = (visible_options + 4) * line_height - line_height / 4;
+        const int height = (visible_options + 4) * line_height - line_height / 4 + (line_height * 2); /* Add space for version strings */
         const int x = (640 / 2) - (width / 2);
-        const int y = (480 / 2) - (height / 2);
+        const int y = (480 / 2) - (height / 2); /* Vertically centered */
         const int x_item = x + 4;
         const int x_choice = 344 + 24 + 20 + 25; /* magic :( */
 

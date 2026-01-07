@@ -22,7 +22,7 @@
       <TextBlock Text=" "/>
 
       <StackPanel Orientation="Horizontal">
-        <TextBlock>https://github.com/sonik-br/GDMENUCardManager/</TextBlock>
+        <TextBlock>https://github.com/DerekPascarella/openMenu-Virtual-Folder-Bundle</TextBlock>
         <Button Margin="5 0 0 0" ToolTip.Tip="Open Link" Padding="2" Background="Transparent" BorderBrush="Transparent" Click="ButtonLink_Click">
           <ContentControl Content="{StaticResource ViewOpenInNew}"/>
         </Button>
