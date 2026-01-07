@@ -67,4 +67,68 @@ Usage documentation and tuturial video link goes here.
 
 ## Theme Format
 
-Details on "Folders" Style theme format go here.
+A separate openMenu theme format was designed for the new "Folders" Style mode.
+
+To add a new theme, navigate to the `tools\openMenu\menu_data\theme\` folder and create a folder named `FOLDERS_X`, where `X` is a number between zero and nine. Inside that folder, create a new file named `THEME.INI`. See example and explanation of parameters below.
+
+```
+[THEME]
+name=FolderDefault
+text_color=255,255,255
+highlight_color=207,62,17
+cursor_color=75,75,75
+multidisc_color=207,62,17
+menu_title_color=0,0,0
+menu_text_color=255,255,255
+menu_highlight_color=207,62,17
+menu_bkg_color=0,0,0
+menu_bkg_border_color=255,255,255
+list_x=11
+list_y=72
+artwork_x=418
+artwork_y=223
+artwork_size=210
+```
+
+- **text_color**: Color for normal (non-selected) game names in the list  
+  _Example_: `255,255,255` (white)
+- **highlight_color**: Color for the currently selected game name  
+  _Example_: `207,62,17` (orange-red)
+- **cursor_color**: Background color for the selection cursor rectangle  
+  _Example_: `75,75,75` (dark gray)
+- **multidisc_color**: Color for the multidisc indicator icon/text  
+  _Example_: `207,62,17` (orange-red)
+- **menu_title_color**: Color for popup titles (`Settings`, `Credits`, `Multidisc`, etc.)  
+  _Example_: `0,0,0` (black)
+- **menu_text_color**: Color for text items in popup menus  
+  _Example_: `255,255,255` (white)
+- **menu_highlight_color**: Color for highlighted/selected menu items  
+  _Example_: `207,62,17` (orange-red)
+- **menu_bkg_color**: Background fill color for popup boxes  
+  _Example_: `0,0,0` (black)
+- **menu_bkg_border_color**: Border outline color for popup boxes  
+  _Example_: `255,255,255` (white)
+- **list_x**: Horizontal position of game list (left edge)  
+  _Example_: `11` (11 pixels from left screen edge)
+- **list_y**: Vertical position of game list (top of first item)  
+  _Example_: `72` (72 pixels from top screen edge)
+- **artwork_x**: Horizontal position of box art/artwork (left edge)  
+  _Example_: `418` (418 pixels from left screen edge)
+- **artwork_y**: Vertical position of box art/artwork (top edge)  
+  _Example_: `223` (223 pixels from top screen edge)
+- **artwork_size**: Width and height of artwork square in pixels  
+  _Example_: `210` (210x210 pixel square)
+
+**Note**: All position values are absolute pixel coordinates for 640x480 resolution. If a positioning key is set to `0` or omitted, Folders mode uses built-in fallback defaults.
+
+After making desited changes to `THEME.INI`, use a preferred image editor to create two PNGs: one with a resolution of 512x512px named `BG_L.PNG`, the other with a resolution of 128x512 pixels named `BG_R.PNG`. Template for these can be found in the `tools\openMenu\menu_data\theme\FOLDERS` folder.
+
+Split a 640x480px background image across these two PNGs, noting that the bottom row of 32 pixels will be ignored.
+
+![theme_1.png](https://github.com/DerekPascarella/openMenu-Virtual-Folder-Bundle/blob/main/images/theme_1.png?raw=true)
+
+Next, open each PNG in [PVR Tool](https://www.romhacking.net/utilities/1463/).
+
+For `BG_L.PNG`, navigate to Tools → Set Global Index and use the value `1025`. Next, Navigate to File → Save As, using `565` for "Format", `no palette` for "Palette", only `Twiddle` for "Options", and `BG_L.PVR` as the destination file name.
+
+For `BG_R.PNG`, navigate to Tools → Set Global Index and use the value `1026`. Next, Navigate to File → Save As, using `565` for "Format", `no palette` for "Palette", and `BG_R.PVR` as the destination file name.
