@@ -180,7 +180,7 @@ The original openMenu project was created by Hayden Kowalchuk (mrneo240), with s
 **Modifications made by Derek Pascarella (ateam) in 2026:**
 - See the [Changes Since openMenu v1.3.0](#changes-since-openmenu-v130) section.
 
-For the full openMenu license text, see `./openMenu/LICENSE.md`.
+For the full openMenu license text, see `/openMenu/LICENSE.md`.
 
 ### GD MENU Card Manager
 This project includes a modified version of GD MENU Card Manager by sonik-br:
@@ -194,14 +194,14 @@ Licensed under the GNU General Public License v3.0 (GPL-3.0)
 **Modifications made by Derek Pascarella (ateam) in 2026:**
 - See the [Changes Since GD MENU Card Manager v2.0.1](#changes-since-gd-menu-card-manager-v201) section.
 
-This modified version is also licensed under GPL-3.0. For the full license text, see `./GD Menu Card Manager/LICENSE`.
+This modified version is also licensed under GPL-3.0. For the full license text, see `/GD Menu Card Manager/LICENSE`.
 
-**Source Code Availability**: Per GPL-3.0 requirements, the complete source code for GD MENU Card Manager is included in this distribution at `./GD Menu Card Manager/src/`.
+**Source Code Availability**: Per GPL-3.0 requirements, the complete source code for GD MENU Card Manager is included in this distribution at `/GD Menu Card Manager/src/`.
 
 ### Third-Party Components
 Both projects include additional third-party components with their own licenses:
-- DiscUtils (see `./GD Menu Card Manager/src/GDMENUCardManager.Core/DiscUtils/DiscUtils-LICENSE.txt`)
+- DiscUtils (see `/GD Menu Card Manager/src/GDMENUCardManager.Core/DiscUtils/DiscUtils-LICENSE.txt`)
 - SevenZip library (LGPL v3)
-- Various libraries in `openMenu/external/` with their respective licenses
+- Various libraries in `/openMenu/external/` with their respective licenses
 
 All original copyright notices and licenses for these components have been preserved.
