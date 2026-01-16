@@ -272,11 +272,11 @@ Use the **Move Up** and **Move Down** buttons (arrow icons) to change the order 
 
 1. Click the **Batch Rename** button.
 2. Select which games to rename:
-  - **On SD Card** - Games already in numbered folders.
-  - **Other** - Games pending copy to SD card.
+   - **On SD Card** - Games already in numbered folders.
+   - **Other** - Games pending copy to SD card.
 3. Choose the naming source:
-  - **Folder** - Use the folder name.
-  - **File** - Use the disc image filename.
+   - **Folder** - Use the folder name.
+   - **File** - Use the disc image filename.
 4. Enable **Read TOSEC naming** to automatically parse and clean up [TOSEC naming convention](https://www.tosecdev.org/) filenames.
 
 **Automatic Renaming** (Right-click menu → Automatically Rename Title):
