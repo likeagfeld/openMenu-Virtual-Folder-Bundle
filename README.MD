@@ -130,7 +130,7 @@ The latest version of **openMenu Virtual Folder Bundle** is [1.1-ateam](https://
 	- Changed automatic disc image renaming option behavior (see [Issue 40](https://github.com/DerekPascarella/openMenu-Virtual-Folder-Bundle/issues/40)).
 	- Updated File/Directory Move operations to overwrite existing to prevent errors (see [Issue 41](https://github.com/DerekPascarella/openMenu-Virtual-Folder-Bundle/issues/41)).
 - **Version 1.0-ateam (2026-01-07)**
-  - Initial release.
+  - Initial release (see the [Changes to openMenu and GD MENU Card Manager](#changes-to-openmenu-and-gd-menu-card-manager) section).
 
 ## Credits
 
