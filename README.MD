@@ -78,10 +78,12 @@ To accommodate the new openMenu, a modified version of [GD MENU Card Manager](ht
 
 The latest version of **openMenu Virtual Folder Bundle** is [1.1-ateam](https://github.com/DerekPascarella/openMenu-Virtual-Folder-Bundle/releases/tag/1.1-ateam).
 
-## Roadmap
+## Potential Roadmap
 
-- Simplified artwork management integrated directly into GD MENU Card Manager (exclusively for Folders mode).
-- Enhanced openMenu configuration save file management, including choice of target VMU on which to save settings, option to load settings from a specific VMU, and detailed success/error messages upon attempted VMU save/load operations.
+- Enhanced openMenu configuration save file management, including choice of target VMU on which to save settings, option to load settings from a specific VMU, and detailed success/error messages upon attempted VMU save/load operations. This screen should also show if a particular VMU socket is detected to have a VM2, VMUPro, or USB4MAPLE attached.
+- Simplified artwork management integrated directly into GD MENU Card Manager (possibly exclusively for Folders mode).
+  - New DAT format, data from which could be displayed in a popup window afer player holds A button with cursor over a disc image.
+    - Customized genre tags and an entry for a user-defined note of any kind.
 
 ## Changelog
 
