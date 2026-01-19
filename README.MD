@@ -56,19 +56,21 @@ To accommodate the new openMenu, a modified version of [GD MENU Card Manager](ht
     - [Grid/LineDesc Mode Settings](#gridlinedesc-mode-settings)
     - [Scroll Mode Settings](#scroll-mode-settings)
     - [Folders Mode Settings](#folders-mode-settings)
-  - [Button Mapping](#button-mapping)
-    - [Grid and LineDesc Modes](#grid-and-linedesc-modes)
-    - [Scroll Mode](#scroll-mode)
-    - [Folders Mode](#folders-mode)
-    - [Popup Menus (All Modes)](#popup-menus-all-modes)
-  - [Keyboard Support](#keyboard-support)
-- [Theme Format](#theme-format)
-  - [General](#general)
-  - [Colors](#colors)
-  - [Game List Positioning](#game-list-positioning)
-  - [Artwork Positioning](#artwork-positioning)
-  - [Item Details Positioning](#item-details-positioning)
-  - [Optional Clock](#optional-clock)
+- [Button Mapping](#button-mapping)
+  - [Grid and LineDesc Modes](#grid-and-linedesc-modes)
+  - [Scroll Mode](#scroll-mode)
+  - [Folders Mode](#folders-mode)
+  - [Popup Menus (All Modes)](#popup-menus-all-modes)
+- [Keyboard Support](#keyboard-support)
+- [Theming](#theming)
+  - [Additional Themes](#additional-themes)
+  - [Theme Format](#theme-format)
+    - [General](#general)
+    - [Color Styling](#color-styling)
+    - [Game List Positioning and Sizing](#game-list-positioning-and-sizing)
+    - [Artwork Positioning and Sizing](#artwork-positioning-and-sizing)
+    - [Item Details Positioning](#item-details-positioning)
+    - [Optional Clock Positioning and Color Styling](#optional-clock-positioning-and-color-styling)
 - [Legal and Licensing](#legal-and-licensing)
   - [openMenu](#openmenu)
   - [GD MENU Card Manager](#gd-menu-card-manager)
@@ -82,7 +84,7 @@ The latest version of **openMenu Virtual Folder Bundle** is [1.1-ateam](https://
 
 - Enhanced openMenu configuration save file management, including choice of target VMU on which to save settings, option to load settings from a specific VMU, and detailed success/error messages upon attempted VMU save/load operations. This screen should also show if a particular VMU socket is detected to have a VM2, VMUPro, or USB4MAPLE attached.
 - Simplified artwork management integrated directly into GD MENU Card Manager (possibly exclusively for Folders mode).
-  - New DAT format, data from which could be displayed in a popup window afer player holds A button with cursor over a disc image.
+  - New DAT format, data from which could be displayed in a popup window after player holds A button with cursor over a disc image.
     - Customized genre tags and an entry for a user-defined note of any kind.
 
 ## Changelog
@@ -410,7 +412,7 @@ Note that unlike previous versions of openMenu, **openMenu Virtual Folder Bundle
 
 openMenu features a built-in version of the Bleemcast! emulator for launching PlayStation discs. While this emulator's performance and compatibility isn't perfect, it will typically be capable of at least booting most retail PlayStation discs as well as specially formatted self-booting Bleemcast! discs.
 
-Support also exists for the work-in-progress [Bloom](https://github.com/pcercuei/bloom) emulator. Users can compile Bloom from source and then place `BLOOM.BIN` in the `tools\openMenu\menu_data` folder, after which launching a PlayStation disc will bring up a menu allowing for the selection betwen Bleemcast! and Bloom.
+Support also exists for the work-in-progress [Bloom](https://github.com/pcercuei/bloom) emulator. Users can compile Bloom from source and then place `BLOOM.BIN` in the `tools\openMenu\menu_data` folder, after which launching a PlayStation disc will bring up a menu allowing for the selection between Bleemcast! and Bloom.
 
 It's important to note that Bloom is early in its development, and while it impressively places heavy emphasis on accuracy and compatibility, most games are not currently in a playable state.
 
@@ -467,7 +469,7 @@ Each view mode has its own set of available settings. Below is a breakdown of ea
 | **Sort** | Alphabetical, Name, Region, Genre, SD Card Order | Determines how the game list is sorted. "SD Card Order" matches physical folder order on SD card. |
 | **Filter** | All, Action, Racing, Simulation, Sports, Lightgun, Fighting, Shooter, Survival, Adventure, Platformer, RPG, Shmup, Strategy, Puzzle, Arcade, Music | Filters the game list to show only titles matching the selected genre. |
 | **Multi-Disc** | Show All, Compact | "Show All" displays every disc individually. "Compact" groups multi-disc games into a single entry. |
-| **VMU Game ID** | Send to All, Send to First, Off | If virtual VMU device like VM2, VMUPro, or USB4MAPLE detected, send Game ID to the first one detected (starting at the first controller port and first VMU socket), all detected, or turn off ID tranmission altogether |
+| **VMU Game ID** | Send to All, Send to First, Off | If virtual VMU device like VM2, VMUPro, or USB4MAPLE detected, send Game ID to the first one detected (starting at the first controller port and first VMU socket), all detected, or turn off ID transmission altogether |
 | **Boot Mode** | Full Boot, License Only, Animation Only, Fast Boot | Controls how the game is launched. "Full Boot" displays the complete boot sequence, "License Only" shows only the SEGA license screen, "Animation Only" plays only the Dreamcast boot animation, and "Fast Boot" skips all startup screens and launches the game immediately. Some titles may not function correctly in modes other than "Full Boot". DreamConn S users are generally advised to use "Full Boot" to ensure VMU synchronization completes before the game starts, which is required for certain games' automatic load features. |
 | **Save / Apply** | N/A | "Save" writes settings to VMU. "Apply" applies settings for current session only. |
 
@@ -574,7 +576,23 @@ Thanks to [Xerxes3rd](https://github.com/DerekPascarella/openMenu-Virtual-Folder
 | Q or Page Up     | Left Trigger                |
 | W or Page Down   | Right Trigger               |
 
-## Theme Format
+## Theming
+
+### Additional Themes
+
+[In this folder](https://github.com/DerekPascarella/openMenu-Virtual-Folder-Bundle/raw/refs/heads/main/themes), a collection of additional **openMenu Virtual Folder Bundle** themes are available that have been created by the development and testing team.
+
+To install a new theme, users must follow these simple steps.
+
+1. Navigate to the `tools\openMenu\menu_data\theme` folder.
+2. Identify the last `FOLDERS_X` theme folder.
+3. Create a new folder, iterating to the next available number (e.g., `FOLDERS_3`).
+4. Extract the contents of the theme ZIP file into the newly created `FOLDERS_X` folder.
+5. Insert GDEMU SD card into computer, open GD MENU Card Manager, and click **Save Changes**.
+
+Users may also be interested in [GDMenu & OpenMenu HD Theme Manager](https://segaxtreme.net/resources/gdmenu-openmenu-hd-theme-manager-all-in-one-package.61/).
+
+### Theme Format
 
 A separate openMenu theme format was designed for the new "Folders" Style mode.
 
@@ -609,11 +627,11 @@ clock_y=36
 clock_text_color=255,255,255
 ```
 
-### General
+#### General
 
 - **name**: Theme display name shown in settings menu (e.g., `FoldersDefault`)
 
-### Color Styling
+#### Color Styling
 
 - **text_color**: Color for normal (non-selected) game names in the list
 
@@ -655,7 +673,7 @@ clock_text_color=255,255,255
 
   _Example_: `0,0,0` (black)
 
-### Game List Positioning and Sizing
+#### Game List Positioning and Sizing
 
 - **list_x**: Horizontal position of game list (left edge)
 
@@ -673,7 +691,7 @@ clock_text_color=255,255,255
 
   _Example_: `49` (names longer than 49 characters will marquee scroll)
 
-### Artwork Positioning and Sizing
+#### Artwork Positioning and Sizing
 
 - **artwork_x**: Horizontal position of box art/artwork (left edge)
 
@@ -687,7 +705,7 @@ clock_text_color=255,255,255
 
   _Example_: `210` (210x210 pixel square)
 
-### Item Details Positioning
+#### Item Details Positioning
 
 - **item_details_x**: Horizontal center point for item details text below artwork
 
@@ -697,7 +715,7 @@ clock_text_color=255,255,255
 
   _Example_: `430` (430 pixels from top screen edge)
 
-### Optional Clock Positioning and Color Styling
+#### Optional Clock Positioning and Color Styling
 
 - **clock_x**: Horizontal position of the clock's right edge (right-justified)
 
@@ -713,7 +731,7 @@ clock_text_color=255,255,255
 
 **Note**: All position values are absolute pixel coordinates for 640x480 resolution. If a positioning key is set to `0` or omitted, Folders mode uses built-in fallback defaults. The cursor width is calculated automatically based on `list_marquee_threshold`.
 
-After making desited changes to `THEME.INI`, use a preferred image editor to create two PNGs: one with a resolution of 512x512px named `BG_L.PNG`, the other with a resolution of 128x512 pixels named `BG_R.PNG`. Templates for these can be found in the `tools\openMenu\menu_data\theme\FOLDERS` folder, and the [included templates](https://github.com/DerekPascarella/openMenu-Virtual-Folder-Bundle/raw/refs/heads/main/theme_template/) for use with [The GIMP](https://www.gimp.org/) may prove useful to some users.
+After making desired changes to `THEME.INI`, use a preferred image editor to create two PNGs: one with a resolution of 512x512px named `BG_L.PNG`, the other with a resolution of 128x512 pixels named `BG_R.PNG`. Templates for these can be found in the `tools\openMenu\menu_data\theme\FOLDERS` folder, and the [included templates](https://github.com/DerekPascarella/openMenu-Virtual-Folder-Bundle/raw/refs/heads/main/theme_template/) for use with [The GIMP](https://www.gimp.org/) may prove useful to some users.
 
 Split a 640x480px background image across these two PNGs, noting that the bottom row of 32 pixels will be ignored.
 
