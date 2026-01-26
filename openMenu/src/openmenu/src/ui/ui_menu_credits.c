@@ -23,6 +23,7 @@
 #include "ui/draw_prototypes.h"
 #include "ui/font_prototypes.h"
 #include "ui/ui_common.h"
+#include "ui/dc/input.h"
 
 #include "ui/ui_menu_credits.h"
 
@@ -1777,15 +1778,15 @@ dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_pt
 void
 handle_input_dcnow(enum control input) {
     switch (input) {
-        case BTN_A: {
+        case A: {
             /* Close popup on A button */
             *state_ptr = DRAW_UI;
         } break;
-        case BTN_B: {
+        case B: {
             /* Close popup on B button */
             *state_ptr = DRAW_UI;
         } break;
-        case BTN_START: {
+        case START: {
             /* Refresh data on START button */
             dcnow_data_fetched = false;
             dcnow_is_loading = true;
@@ -1797,13 +1798,13 @@ handle_input_dcnow(enum control input) {
 
             dcnow_is_loading = false;
         } break;
-        case DIR_UP: {
+        case UP: {
             /* Scroll up through game list */
             if (dcnow_data.data_valid && dcnow_choice > 0) {
                 dcnow_choice--;
             }
         } break;
-        case DIR_DOWN: {
+        case DOWN: {
             /* Scroll down through game list */
             if (dcnow_data.data_valid && dcnow_choice < dcnow_data.game_count) {
                 dcnow_choice++;

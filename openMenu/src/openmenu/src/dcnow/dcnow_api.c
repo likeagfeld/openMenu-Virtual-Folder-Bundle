@@ -73,7 +73,6 @@ static int http_get_request(const char* hostname, const char* path, char* respon
     int sock = -1;
     struct hostent *host;
     struct sockaddr_in server_addr;
-    int result = -1;
     char request_buf[512];
     int total_received = 0;
     uint64_t start_time;
