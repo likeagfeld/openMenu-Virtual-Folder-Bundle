@@ -45,7 +45,22 @@ jobs:
             echo \"KOS_CMAKE_TOOLCHAIN=\$KOS_CMAKE_TOOLCHAIN\"
 
             echo ''
-            echo 'Cleaning previous build...'
+            echo 'Building libppp (PPP addon for modem/DreamPi support)...'
+            cd \$KOS_BASE/addons/libppp
+            make clean || true
+            make
+            make install
+
+            echo ''
+            echo 'Verifying libppp.a was built:'
+            ls -lh \$KOS_BASE/addons/lib/dreamcast/libppp.a
+
+            echo ''
+            echo 'Returning to workspace...'
+            cd /workspace/openMenu
+
+            echo ''
+            echo 'Cleaning previous openMenu build...'
             rm -rf cmake-build-dc-release
 
             echo 'Configuring with CMake preset...'
