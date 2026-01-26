@@ -60,6 +60,12 @@ target_link_libraries(openmenu
         uthash
 )
 
+# Link PPP library for DC Now modem/DreamPi support (KallistiOS addon)
+# This is required for ppp_init, ppp_modem_init, ppp_set_login, ppp_connect functions
+if(CMAKE_CROSSCOMPILING)
+    target_link_libraries(openmenu PRIVATE ppp)
+endif()
+
 if (NOT DEFINED KOS_OBJCOPY)
     # Try to find the program using find_program first (more robust than env var)
     # KOS often uses prefixes, check KOS docs for the exact name (e.g., sh-elf-objcopy)

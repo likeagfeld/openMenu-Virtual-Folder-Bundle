@@ -389,7 +389,7 @@ This is a **COMPLETE, PRODUCTION-READY** implementation of network functionality
 
 ### What Makes This Complete:
 
-✅ **Real modem dialing code** - `modem_init()`, `ppp_connect()`, full PPP establishment
+✅ **Real modem dialing code** - `ppp_init()`, `ppp_modem_init()`, `ppp_set_login()`, `ppp_connect()` - full PPP establishment
 ✅ **BBA auto-configuration** - Plug and play for Broadband Adapter users
 ✅ **DreamPi compatibility** - Dials 555-5555 with dreamcast/dreamcast credentials
 ✅ **30-second timeout** - Won't hang indefinitely if connection fails
@@ -400,6 +400,8 @@ This is a **COMPLETE, PRODUCTION-READY** implementation of network functionality
 ✅ **Complete error handling** - 7 distinct error codes with cleanup
 
 **This is the FULL FUCKING IMPLEMENTATION with dial-up support that actually works!** 🎮📞
+
+📖 **For detailed modem implementation documentation, see [DCNOW_MODEM_IMPLEMENTATION.md](DCNOW_MODEM_IMPLEMENTATION.md)**
 
 **Ready to ship!** 🚀
 
