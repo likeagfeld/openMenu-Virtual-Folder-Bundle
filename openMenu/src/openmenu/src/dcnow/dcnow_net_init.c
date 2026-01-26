@@ -4,7 +4,6 @@
 #ifdef _arch_dreamcast
 #include <kos.h>
 #include <kos/net.h>
-#include <dc/modem/modem.h>
 #include <ppp/ppp.h>
 #include <arch/timer.h>
 #endif
@@ -47,44 +46,42 @@ int dcnow_net_early_init(void) {
 
             printf("DC Now: PPP not connected, attempting to dial DreamPi...\n");
 
-            /* Initialize modem hardware */
-            if (modem_init() < 0) {
-                printf("DC Now: Failed to initialize modem hardware\n");
+            /* Initialize PPP subsystem */
+            printf("DC Now: Initializing PPP subsystem...\n");
+            if (ppp_init() < 0) {
+                printf("DC Now: Failed to initialize PPP subsystem\n");
                 return -3;
             }
-            printf("DC Now: Modem hardware initialized\n");
 
-            /* Set modem speed - V.90 (56k) for DreamPi compatibility */
-            if (modem_set_mode(MODEM_MODE_V90) < 0) {
-                printf("DC Now: Failed to set modem mode\n");
-                modem_shutdown();
+            /* Initialize modem with phone number and speed */
+            /* DreamPi uses 555-5555 (or similar dummy number) */
+            /* Second parameter: 1 = speed flag (V.90 56k) */
+            /* Third parameter: NULL = no callback */
+            printf("DC Now: Initializing modem (dialing 555-5555)...\n");
+            if (ppp_modem_init("555-5555", 1, NULL) < 0) {
+                printf("DC Now: Failed to initialize modem\n");
+                ppp_shutdown();
                 return -4;
             }
-            printf("DC Now: Modem mode set to V.90\n");
 
-            /* Initialize PPP with DreamPi settings */
-            /* DreamPi typically uses phone number 555-5555 or similar dummy number */
-            /* Username/password are usually "dreamcast" or empty */
-            printf("DC Now: Dialing DreamPi (555-5555)...\n");
-
-            if (ppp_init() < 0) {
-                printf("DC Now: Failed to initialize PPP\n");
-                modem_shutdown();
+            /* Set login credentials for PPP authentication */
+            /* DreamPi typically uses dreamcast/dreamcast */
+            printf("DC Now: Setting PPP login credentials...\n");
+            if (ppp_set_login("dreamcast", "dreamcast") < 0) {
+                printf("DC Now: Failed to set login credentials\n");
+                ppp_shutdown();
                 return -5;
             }
 
-            /* Use standard DreamPi/dial-up settings */
-            /* Phone number: 555-5555 (DreamPi default) */
-            /* Login: dreamcast */
-            /* Password: dreamcast */
-            if (ppp_connect("555-5555", "dreamcast", "dreamcast", 0) < 0) {
-                printf("DC Now: Failed to dial modem\n");
+            /* Establish PPP connection */
+            printf("DC Now: Connecting PPP...\n");
+            if (ppp_connect() < 0) {
+                printf("DC Now: Failed to initiate PPP connection\n");
                 ppp_shutdown();
-                modem_shutdown();
                 return -6;
             }
 
-            printf("DC Now: Modem dialed, waiting for PPP connection...\n");
+            printf("DC Now: PPP connection initiated, waiting for link up...\n");
 
             /* Wait for PPP connection to be established (max 30 seconds) */
             int wait_count = 0;
@@ -124,9 +121,9 @@ int dcnow_net_early_init(void) {
             printf("DC Now:   - DreamPi is running and configured\n");
             printf("DC Now:   - Modem cable is properly connected\n");
             printf("DC Now:   - DreamPi network settings are correct\n");
+            printf("DC Now:   - Phone line cable connected between DC and DreamPi\n");
 
             ppp_shutdown();
-            modem_shutdown();
             return -7;  /* Connection timeout */
         }
     }
