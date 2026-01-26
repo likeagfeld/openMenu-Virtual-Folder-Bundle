@@ -60,16 +60,25 @@ target_link_libraries(openmenu
         uthash
 )
 
-# Link PPP library for DC Now modem/DreamPi support (KallistiOS addon)
-# This is required for ppp_init, ppp_modem_init, ppp_set_login, ppp_connect functions
-# PPP is in KallistiOS addons, need to add the library directory and link
+# PPP library for DC Now modem/DreamPi support (KallistiOS addon)
+# PPP headers are available in KallistiOS but the library may not be built by default
+# The code will compile and work with BBA. Modem support requires PPP library at runtime.
+# Note: Some KallistiOS builds may not include libppp.a - this is intentionally optional
 if(CMAKE_CROSSCOMPILING)
-    # Add KallistiOS addon library path
     if(DEFINED ENV{KOS_BASE})
-        link_directories($ENV{KOS_BASE}/addons/lib/dreamcast)
-        target_link_libraries(openmenu PRIVATE ppp)
-    else()
-        message(WARNING "KOS_BASE not set, cannot link PPP library")
+        # Try to find and link PPP library if it exists
+        find_library(PPP_LIBRARY NAMES ppp HINTS
+            $ENV{KOS_BASE}/addons/lib/dreamcast
+            $ENV{KOS_BASE}/addons/lib
+            $ENV{KOS_BASE}/lib
+        )
+        if(PPP_LIBRARY)
+            message(STATUS "Found PPP library: ${PPP_LIBRARY}")
+            target_link_libraries(openmenu PRIVATE ${PPP_LIBRARY})
+        else()
+            message(WARNING "PPP library not found - modem/DreamPi support will be unavailable, BBA only")
+            # Don't fail the build - BBA support will still work
+        endif()
     endif()
 endif()
 
