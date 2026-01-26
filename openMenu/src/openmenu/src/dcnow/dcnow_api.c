@@ -2,6 +2,8 @@
 #include "dcnow_json.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
 
 #ifdef _arch_dreamcast
 #include <kos.h>
@@ -31,56 +33,26 @@ int dcnow_init(void) {
         return 0;  /* Already initialized */
     }
 
-    /* Initialize KOS network subsystem */
-    /* This auto-detects BBA or modem and initializes appropriately */
-    printf("DC Now: Initializing network...\n");
-
-    if (net_init() < 0) {
-        printf("DC Now: Network initialization failed\n");
-        return -1;
-    }
-
-    /* Wait a moment for network to stabilize */
-    thd_sleep(500);  /* 500ms */
-
-    /* Check if we have a valid network device */
-    /* net_default_dev should be set by net_init() */
+    /* Network should be initialized early in main() via dcnow_net_early_init() */
+    /* Just check if network device is available */
     if (!net_default_dev) {
         printf("DC Now: No network device found\n");
-        printf("DC Now: Make sure BBA is connected or modem is configured\n");
-        return -2;
+        printf("DC Now: Make sure BBA is connected or DreamPi modem is dialed\n");
+        return -1;
     }
 
     printf("DC Now: Network device: %s\n", net_default_dev->name);
 
-    /* For modem/DreamPi: Check if PPP is configured */
+    /* For modem/DreamPi */
     if (strncmp(net_default_dev->name, "ppp", 3) == 0) {
         printf("DC Now: Modem/DreamPi detected\n");
-        printf("DC Now: Note: Modem must be configured via modem_init() before openMenu starts\n");
-        /* The modem should already be initialized and connected by this point */
-        /* If not, we'll get connection errors when trying to use sockets */
     }
-    /* For BBA: Should be auto-configured by net_init() */
+    /* For BBA */
     else if (strncmp(net_default_dev->name, "bba", 3) == 0) {
         printf("DC Now: Broadband Adapter detected\n");
     }
 
-    /* Wait for link to be established */
-    int retry = 0;
-    while (retry < 20) {  /* 10 seconds max */
-        if (net_default_dev->if_flags & NETIF_FLAG_LINK_UP) {
-            break;
-        }
-        thd_sleep(500);
-        retry++;
-    }
-
-    if (!(net_default_dev->if_flags & NETIF_FLAG_LINK_UP)) {
-        printf("DC Now: Network link not established\n");
-        return -3;
-    }
-
-    printf("DC Now: Network link up\n");
+    printf("DC Now: Network ready\n");
     network_initialized = true;
     return 0;
 #else

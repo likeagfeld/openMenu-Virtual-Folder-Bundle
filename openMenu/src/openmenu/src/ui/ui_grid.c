@@ -22,6 +22,7 @@
 #include "ui/font_prototypes.h"
 #include "ui/ui_common.h"
 #include "ui/ui_menu_credits.h"
+#include "ui/dc/input.h"
 
 #include "ui/ui_grid.h"
 

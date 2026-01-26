@@ -73,18 +73,16 @@ int dcnow_net_early_init(void) {
     int max_wait = 400; /* 40 seconds at 100ms intervals */
 
     while (wait_count < max_wait) {
-        /* Check if link is up */
-        if (net_default_dev && (net_default_dev->if_flags & NETIF_FLAG_LINK_UP)) {
+        /* Check if link is up by verifying device exists and has an IP */
+        if (net_default_dev && net_default_dev->ip_addr[0] != 0) {
             printf("DC Now: PPP connection established!\n");
 
             /* Display connection info */
-            if (net_default_dev->ip_addr[0] != 0) {
-                printf("DC Now: IP Address: %d.%d.%d.%d\n",
-                       net_default_dev->ip_addr[0],
-                       net_default_dev->ip_addr[1],
-                       net_default_dev->ip_addr[2],
-                       net_default_dev->ip_addr[3]);
-            }
+            printf("DC Now: IP Address: %d.%d.%d.%d\n",
+                   net_default_dev->ip_addr[0],
+                   net_default_dev->ip_addr[1],
+                   net_default_dev->ip_addr[2],
+                   net_default_dev->ip_addr[3]);
 
             return 0;  /* Success! */
         }
