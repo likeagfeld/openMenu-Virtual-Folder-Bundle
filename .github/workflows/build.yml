@@ -32,6 +32,7 @@ jobs:
         echo "========================================="
 
         docker run --rm \
+          --user root \
           -v "$PWD":/workspace \
           -w /workspace/openMenu \
           sbstnc/openmenu-dev:0.2.2 \
