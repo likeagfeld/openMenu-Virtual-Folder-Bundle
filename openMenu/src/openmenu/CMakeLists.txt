@@ -34,7 +34,6 @@ set(OPENMENU_SOURCES
         src/dcnow/dcnow_api.c
         src/dcnow/dcnow_json.c
         src/dcnow/dcnow_net_init.c
-        src/dcnow/dcnow_ppp_weak.c
 )
 
 add_executable(openmenu ${OPENMENU_SOURCES})
@@ -62,12 +61,11 @@ target_link_libraries(openmenu
 )
 
 # PPP library for DC Now modem/DreamPi support (KallistiOS addon)
-# PPP headers are available in KallistiOS but the library may not be built by default
-# The code will compile and work with BBA. Modem support requires PPP library at runtime.
-# Note: Some KallistiOS builds may not include libppp.a - this is intentionally optional
+# REQUIRED for full DreamPi modem dial-up functionality
+# The workflow builds libppp.a from source before compiling openMenu
 if(CMAKE_CROSSCOMPILING)
     if(DEFINED ENV{KOS_BASE})
-        # Try to find and link PPP library if it exists
+        # Find and link PPP library (REQUIRED)
         find_library(PPP_LIBRARY NAMES ppp HINTS
             $ENV{KOS_BASE}/addons/lib/dreamcast
             $ENV{KOS_BASE}/addons/lib
@@ -77,9 +75,10 @@ if(CMAKE_CROSSCOMPILING)
             message(STATUS "Found PPP library: ${PPP_LIBRARY}")
             target_link_libraries(openmenu PRIVATE ${PPP_LIBRARY})
         else()
-            message(WARNING "PPP library not found - modem/DreamPi support will be unavailable, BBA only")
-            # Don't fail the build - BBA support will still work
+            message(FATAL_ERROR "PPP library not found! Build libppp first: cd $ENV{KOS_BASE}/addons/libppp && make")
         endif()
+    else()
+        message(FATAL_ERROR "KOS_BASE not set - cannot build for Dreamcast")
     endif()
 endif()
 
