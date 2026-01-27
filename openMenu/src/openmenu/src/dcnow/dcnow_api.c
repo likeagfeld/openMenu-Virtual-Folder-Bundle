@@ -131,14 +131,14 @@ static int http_get_request(const char* hostname, const char* path, char* respon
            net_default_dev->ip_addr[3]);
 
     /* RETRY LOOP: Socket creation may fail initially after PPP connect */
-    /* Keep trying for up to 60 seconds with 3-second delays */
+    /* After 30-second wait, try up to 5 more times with 5-second delays */
     int retry_count = 0;
-    int max_retries = 20;  /* 20 attempts × 3 seconds = 60 seconds max */
+    int max_retries = 5;  /* 5 attempts × 5 seconds = 25 seconds max */
 
     for (retry_count = 0; retry_count < max_retries; retry_count++) {
         if (retry_count > 0) {
-            printf("DC Now: Socket retry %d/%d, waiting 3 seconds...\n", retry_count + 1, max_retries);
-            thd_sleep(3000);  /* Wait 3 seconds between retries */
+            printf("DC Now: Socket retry %d/%d, waiting 5 seconds...\n", retry_count + 1, max_retries);
+            thd_sleep(5000);  /* Wait 5 seconds between retries */
         }
 
         /* Try socket creation - use 0 instead of IPPROTO_TCP (some KOS examples use this) */

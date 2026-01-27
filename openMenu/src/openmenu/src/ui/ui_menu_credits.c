@@ -1916,9 +1916,13 @@ handle_input_dcnow(enum control input) {
                 } else {
                     printf("DC Now: Connection successful\n");
 
-                    /* Wait 5 seconds like ClassiCube */
-                    dcnow_connection_status_callback("Starting in 5 seconds...");
-                    thd_sleep(5000);
+                    /* Wait 30 seconds - ClassiCube users wait longer before creating sockets */
+                    for (int i = 30; i > 0; i--) {
+                        char msg[64];
+                        snprintf(msg, sizeof(msg), "Waiting %d seconds...", i);
+                        dcnow_connection_status_callback(msg);
+                        thd_sleep(1000);
+                    }
 
                     /* Initialize DC Now API layer */
                     dcnow_connection_status_callback("Initializing...");
