@@ -43,6 +43,19 @@ int dcnow_init(void) {
 
     printf("DC Now: Network device: %s\n", net_default_dev->name);
 
+    /* Check if we have an IP address */
+    if (net_default_dev->ip_addr[0] == 0 && net_default_dev->ip_addr[1] == 0 &&
+        net_default_dev->ip_addr[2] == 0 && net_default_dev->ip_addr[3] == 0) {
+        printf("DC Now: No IP address assigned yet\n");
+        return -2;
+    }
+
+    printf("DC Now: IP address: %d.%d.%d.%d\n",
+           net_default_dev->ip_addr[0],
+           net_default_dev->ip_addr[1],
+           net_default_dev->ip_addr[2],
+           net_default_dev->ip_addr[3]);
+
     /* For modem/DreamPi */
     if (strncmp(net_default_dev->name, "ppp", 3) == 0) {
         printf("DC Now: Modem/DreamPi detected\n");
@@ -51,6 +64,10 @@ int dcnow_init(void) {
     else if (strncmp(net_default_dev->name, "bba", 3) == 0) {
         printf("DC Now: Broadband Adapter detected\n");
     }
+
+    /* Give the network stack a moment to fully initialize */
+    printf("DC Now: Waiting for network stack...\n");
+    thd_sleep(1000);  /* 1 second delay */
 
     printf("DC Now: Network ready\n");
     network_initialized = true;
@@ -78,12 +95,26 @@ static int http_get_request(const char* hostname, const char* path, char* respon
     uint64_t start_time;
     uint64_t timeout_ticks;
 
+    /* Verify network is still available */
+    if (!net_default_dev) {
+        printf("DC Now: Network device disappeared\n");
+        return -2;
+    }
+
     /* Create socket */
-    sock = socket(AF_INET, SOCK_STREAM, 0);
+    printf("DC Now: Creating socket...\n");
+    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock < 0) {
-        printf("DC Now: Socket creation failed (errno: %d)\n", errno);
+        printf("DC Now: Socket creation failed (sock=%d, errno=%d)\n", sock, errno);
+        printf("DC Now: Network device: %s, IP: %d.%d.%d.%d\n",
+               net_default_dev->name,
+               net_default_dev->ip_addr[0],
+               net_default_dev->ip_addr[1],
+               net_default_dev->ip_addr[2],
+               net_default_dev->ip_addr[3]);
         return -2;  /* Socket creation failed */
     }
+    printf("DC Now: Socket created (fd=%d)\n", sock);
 
     /* Resolve hostname */
     printf("DC Now: Resolving %s...\n", hostname);
