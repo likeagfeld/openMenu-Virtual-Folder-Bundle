@@ -191,6 +191,7 @@ typedef enum MENU_CHOICE {
     CHOICE_VM2_SEND_ALL,
     CHOICE_BOOT_MODE,
     CHOICE_SAVE,
+    CHOICE_DCNOW,
     CHOICE_CREDITS,
     CHOICE_END = CHOICE_CREDITS
 } MENU_CHOICE;
@@ -456,6 +457,10 @@ menu_accept(void) {
         }
         extern void reload_ui(void);
         reload_ui();
+    }
+    if (current_choice == CHOICE_DCNOW) {
+        *state_ptr = DRAW_DCNOW;
+        *input_timeout_ptr = (20 * 1) /* 1/3 second */;
     }
     if (current_choice == CHOICE_CREDITS) {
         *state_ptr = DRAW_CREDITS;
@@ -1078,20 +1083,23 @@ draw_menu_tr(void) {
             font_bmp_draw_main(x_item, cur_y, line_buf);
         }
 
-        /* Draw Save/Apply/Credits on one line */
+        /* Draw Save/Apply/DC Now/Credits on one line */
         uint32_t save_color =
             ((current_choice == CHOICE_SAVE) && (choices[CHOICE_SAVE] == 0) ? highlight_color : text_color);
         uint32_t apply_color =
             ((current_choice == CHOICE_SAVE) && (choices[CHOICE_SAVE] == 1) ? highlight_color : text_color);
+        uint32_t dcnow_color = (current_choice == CHOICE_DCNOW ? highlight_color : text_color);
         uint32_t credits_color = (current_choice == CHOICE_CREDITS ? highlight_color : text_color);
         cur_y += line_height;
-        /* Save at left, Apply in middle, Credits at right */
+        /* Save, Apply, DC Now, Credits across the bottom */
         font_bmp_set_color(save_color);
-        font_bmp_draw_main(640 / 2 - (8 * 12), cur_y, save_choice_text[0]);
+        font_bmp_draw_main(640 / 2 - (8 * 18), cur_y, save_choice_text[0]);
         font_bmp_set_color(apply_color);
-        font_bmp_draw_main(640 / 2 - (8 * 3), cur_y, save_choice_text[1]);
+        font_bmp_draw_main(640 / 2 - (8 * 7), cur_y, save_choice_text[1]);
+        font_bmp_set_color(dcnow_color);
+        font_bmp_draw_main(640 / 2 + (8 * 1), cur_y, "DC Now");
         font_bmp_set_color(credits_color);
-        font_bmp_draw_main(640 / 2 + (8 * 6), cur_y, credits_text[0]);
+        font_bmp_draw_main(640 / 2 + (8 * 11), cur_y, credits_text[0]);
 
         /* Add empty line for spacing */
         cur_y += line_height;
@@ -1206,16 +1214,18 @@ draw_menu_tr(void) {
             }
         }
 
-        /* Draw Save/Apply/Credits on one line */
+        /* Draw Save/Apply/DC Now/Credits on one line */
         uint32_t save_color =
             ((current_choice == CHOICE_SAVE) && (choices[CHOICE_SAVE] == 0) ? highlight_color : text_color);
         uint32_t apply_color =
             ((current_choice == CHOICE_SAVE) && (choices[CHOICE_SAVE] == 1) ? highlight_color : text_color);
+        uint32_t dcnow_color = ((current_choice == CHOICE_DCNOW) ? highlight_color : text_color);
         uint32_t credits_color = ((current_choice == CHOICE_CREDITS) ? highlight_color : text_color);
         cur_y += line_height;
-        font_bmf_draw_centered(640 / 2 - (width / 3), cur_y, save_color, save_choice_text[0]);
-        font_bmf_draw_centered(640 / 2, cur_y, apply_color, save_choice_text[1]);
-        font_bmf_draw_centered(640 / 2 + (width / 3), cur_y, credits_color, credits_text[0]);
+        font_bmf_draw_centered(640 / 2 - (width / 2) + 50, cur_y, save_color, save_choice_text[0]);
+        font_bmf_draw_centered(640 / 2 - (width / 6), cur_y, apply_color, save_choice_text[1]);
+        font_bmf_draw_centered(640 / 2 + (width / 6), cur_y, dcnow_color, "DC Now");
+        font_bmf_draw_centered(640 / 2 + (width / 2) - 50, cur_y, credits_color, credits_text[0]);
 
         /* Add empty line for spacing */
         cur_y += line_height;
@@ -1781,33 +1791,14 @@ dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_pt
     popup_setup(state, _colors, timeout_ptr, title_color);
     dcnow_choice = 0;
 
-    /* Initialize network on first use (lazy initialization) */
-    /* This happens when user presses L+R, not at boot */
-    if (!dcnow_net_initialized) {
-        /* Set up visual callback for connection status */
-        dcnow_set_status_callback(dcnow_connection_status_callback);
+    /* Network initialization is now done via menu option, not automatically */
+    /* User can select "Connect to DreamPi" from the DC Now menu */
 
-        printf("DC Now: Initializing network (first use)...\n");
-        int net_result = dcnow_net_early_init();
-
-        /* Clear the callback */
-        dcnow_set_status_callback(NULL);
-
-        if (net_result < 0) {
-            printf("DC Now: Network init failed: %d\n", net_result);
-        } else {
-            printf("DC Now: Network initialized successfully\n");
-        }
-        dcnow_net_initialized = true;  /* Mark as attempted regardless of success */
-    }
-
-    /* Try to fetch data if we haven't already */
-    if (!dcnow_data_fetched && !dcnow_is_loading) {
+    /* If network is already initialized and we haven't fetched data yet, try to fetch */
+    if (dcnow_net_initialized && !dcnow_data_fetched && !dcnow_is_loading) {
         dcnow_is_loading = true;
 
-        /* Attempt to fetch fresh data from dreamcast.online/now
-         * This will use stub data if DCNOW_USE_STUB_DATA is defined,
-         * otherwise it will fail with "not implemented" error */
+        /* Attempt to fetch fresh data from dreamcast.online/now */
         int result = dcnow_fetch_data(&dcnow_data, 5000);  /* 5 second timeout */
 
         if (result == 0) {
@@ -1817,16 +1808,50 @@ dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_pt
             if (!dcnow_get_cached_data(&dcnow_data)) {
                 /* No cached data available, show error */
                 memset(&dcnow_data, 0, sizeof(dcnow_data));
-                strcpy(dcnow_data.error_message, "Network error - cannot connect");
+                strcpy(dcnow_data.error_message, "Not connected - select Connect to begin");
                 dcnow_data.data_valid = false;
             }
         }
 
         dcnow_is_loading = false;
+    } else if (!dcnow_net_initialized) {
+        /* Show message prompting user to connect */
+        memset(&dcnow_data, 0, sizeof(dcnow_data));
+        strcpy(dcnow_data.error_message, "Not connected - select Connect to begin");
+        dcnow_data.data_valid = false;
     }
 }
 
 void
+/* Helper to render a connection status frame before blocking operation */
+static void render_connection_frame(const char* message) {
+    pvr_wait_ready();
+    pvr_scene_begin();
+
+    draw_set_list(PVR_LIST_OP_POLY);
+    pvr_list_begin(PVR_LIST_OP_POLY);
+    pvr_list_finish();
+
+    draw_set_list(PVR_LIST_TR_POLY);
+    pvr_list_begin(PVR_LIST_TR_POLY);
+
+    /* White border */
+    const int border_width = 2;
+    draw_draw_quad(160 - border_width, 200 - border_width,
+                   320 + (2 * border_width), 80 + (2 * border_width),
+                   0xFFFFFFFF);
+
+    /* Black background */
+    draw_draw_quad(160, 200, 320, 80, 0xFF000000);
+
+    /* Message */
+    font_bmf_begin_draw();
+    font_bmf_draw_centered(320, 230, 0xFFFFFFFF, message);
+
+    pvr_list_finish();
+    pvr_scene_finish();
+}
+
 handle_input_dcnow(enum control input) {
     switch (input) {
         case A: {
@@ -1838,16 +1863,47 @@ handle_input_dcnow(enum control input) {
             *state_ptr = DRAW_UI;
         } break;
         case START: {
-            /* Refresh data on START button */
-            dcnow_data_fetched = false;
-            dcnow_is_loading = true;
+            if (!dcnow_net_initialized) {
+                /* Connect to DreamPi */
+                render_connection_frame("Connecting to DreamPi...");
 
-            int result = dcnow_fetch_data(&dcnow_data, 5000);
-            if (result == 0) {
-                dcnow_data_fetched = true;
+                printf("DC Now: Connecting to DreamPi...\n");
+                int net_result = dcnow_net_early_init();
+
+                if (net_result < 0) {
+                    printf("DC Now: Connection failed: %d\n", net_result);
+                    memset(&dcnow_data, 0, sizeof(dcnow_data));
+                    snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
+                            "Connection failed (error %d)", net_result);
+                    dcnow_data.data_valid = false;
+                } else {
+                    printf("DC Now: Connected successfully\n");
+                    dcnow_net_initialized = true;
+
+                    /* Now fetch data */
+                    render_connection_frame("Fetching player data...");
+                    dcnow_is_loading = true;
+                    int result = dcnow_fetch_data(&dcnow_data, 5000);
+                    if (result == 0) {
+                        dcnow_data_fetched = true;
+                    }
+                    dcnow_is_loading = false;
+                }
+
+                dcnow_net_initialized = true;  /* Mark as attempted */
+            } else {
+                /* Already connected - refresh data */
+                render_connection_frame("Refreshing player data...");
+                dcnow_data_fetched = false;
+                dcnow_is_loading = true;
+
+                int result = dcnow_fetch_data(&dcnow_data, 5000);
+                if (result == 0) {
+                    dcnow_data_fetched = true;
+                }
+
+                dcnow_is_loading = false;
             }
-
-            dcnow_is_loading = false;
         } break;
         case UP: {
             /* Scroll up through game list */
@@ -1965,11 +2021,15 @@ draw_dcnow_tr(void) {
                 }
             }
         } else {
-            /* Show error message */
+            /* Show error message or connection prompt */
             font_bmp_set_color(text_color);
             font_bmp_draw_main(x_item, cur_y, dcnow_data.error_message);
             cur_y += line_height;
-            font_bmp_draw_main(x_item, cur_y, "Press START to retry");
+            if (!dcnow_net_initialized) {
+                font_bmp_draw_main(x_item, cur_y, "Press START to connect");
+            } else {
+                font_bmp_draw_main(x_item, cur_y, "Press START to retry");
+            }
             cur_y += line_height;
         }
 
@@ -2048,11 +2108,15 @@ draw_dcnow_tr(void) {
                 }
             }
         } else {
-            /* Error */
+            /* Error or connection prompt */
             cur_y += line_height;
             font_bmf_draw(x_item, cur_y, text_color, dcnow_data.error_message);
             cur_y += line_height;
-            font_bmf_draw(x_item, cur_y, text_color, "Press START to retry");
+            if (!dcnow_net_initialized) {
+                font_bmf_draw(x_item, cur_y, text_color, "Press START to connect");
+            } else {
+                font_bmf_draw(x_item, cur_y, text_color, "Press START to retry");
+            }
         }
 
         /* Close */
