@@ -60,11 +60,7 @@ int dcnow_init(void) {
         printf("DC Now: Using %s\n", net_default_dev->name);
     }
 
-    /* CRITICAL: Wait for BSD socket layer to initialize after PPP link */
-    /* PPP connections need significant time for the full TCP/IP stack to initialize */
-    printf("DC Now: Waiting for socket layer initialization (10 seconds)...\n");
-    thd_sleep(10000);  /* 10 seconds - PPP needs longer for TCP/IP stack */
-
+    /* ClassiCube doesn't wait after PPP - try socket immediately */
     printf("DC Now: Ready to create sockets\n");
     network_initialized = true;
     return 0;
@@ -117,10 +113,11 @@ static int http_get_request(const char* hostname, const char* path, char* respon
         fclose(logfile);
     }
 
-    /* Create socket - try protocol 0 (let system choose) */
-    /* KOS PPP may not support explicit IPPROTO_TCP */
-    printf("DC Now: Calling socket(AF_INET, SOCK_STREAM, 0)...\n");
-    sock = socket(AF_INET, SOCK_STREAM, 0);
+    /* Create socket - use IPPROTO_TCP like ClassiCube does */
+    printf("DC Now: Calling socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)...\n");
+    printf("DC Now: AF_INET=%d, SOCK_STREAM=%d, IPPROTO_TCP=%d\n", AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    printf("DC Now: socket() returned %d\n", sock);
 
     if (sock < 0) {
         last_socket_errno = errno;  /* Save errno for display */
