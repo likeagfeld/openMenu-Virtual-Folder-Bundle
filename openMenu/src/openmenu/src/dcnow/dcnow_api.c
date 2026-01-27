@@ -122,9 +122,23 @@ static int http_get_request(const char* hostname, const char* path, char* respon
         return -2;
     }
 
-    /* Create socket - KOS lwIP requires protocol=0, NOT IPPROTO_TCP! */
-    printf("DC Now: Creating socket...\n");
+    printf("DC Now: net_default_dev = %p\n", (void*)net_default_dev);
+    printf("DC Now: Device name: %s\n", net_default_dev->name);
+    printf("DC Now: IP: %d.%d.%d.%d\n",
+           net_default_dev->ip_addr[0], net_default_dev->ip_addr[1],
+           net_default_dev->ip_addr[2], net_default_dev->ip_addr[3]);
+    printf("DC Now: DNS: %d.%d.%d.%d\n",
+           net_default_dev->dns[0], net_default_dev->dns[1],
+           net_default_dev->dns[2], net_default_dev->dns[3]);
+
+    /* Create socket - Try protocol 0 first, then IPPROTO_TCP */
+    printf("DC Now: Attempting socket(AF_INET, SOCK_STREAM, 0)...\n");
     sock = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (sock < 0) {
+        printf("DC Now: Protocol 0 failed (errno=%d), trying IPPROTO_TCP...\n", errno);
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    }
 
     if (sock < 0) {
         last_socket_errno = errno;
