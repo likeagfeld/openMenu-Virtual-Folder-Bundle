@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <kos/init.h>
 #include <arch/exec.h>
 #include <dc/cdrom.h>
 #include <dc/flashrom.h>
