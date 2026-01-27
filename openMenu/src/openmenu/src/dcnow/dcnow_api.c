@@ -60,9 +60,21 @@ int dcnow_init(void) {
         printf("DC Now: Using %s\n", net_default_dev->name);
     }
 
-    /* Brief delay to let PPP I/O layer settle (EIO errno 5 if too fast) */
-    printf("DC Now: Waiting for I/O layer (2 seconds)...\n");
-    thd_sleep(2000);
+    /* PPP I/O layer needs time to fully initialize after connection */
+    /* ClassiCube initializes PPP at startup, we do it on-demand */
+    printf("DC Now: Waiting for I/O layer (5 seconds)...\n");
+    thd_sleep(5000);
+
+    /* Try to "prime" the socket layer by creating and closing a test socket */
+    printf("DC Now: Priming socket layer...\n");
+    int test_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (test_sock >= 0) {
+        printf("DC Now: Test socket created successfully (fd=%d)\n", test_sock);
+        close(test_sock);
+        printf("DC Now: Test socket closed\n");
+    } else {
+        printf("DC Now: Test socket failed with errno=%d, continuing anyway...\n", errno);
+    }
 
     printf("DC Now: Ready to create sockets\n");
     network_initialized = true;
