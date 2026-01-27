@@ -129,37 +129,32 @@ static int http_get_request(const char* hostname, const char* path, char* respon
            net_default_dev->ip_addr[2],
            net_default_dev->ip_addr[3]);
 
-    /* Log to SD card */
-    FILE* logfile = fopen("/ram/DCNOW_LOG.TXT", "a");
-    if (logfile) {
-        fprintf(logfile, "Creating socket: Device=%s, IP=%d.%d.%d.%d\n",
-                net_default_dev->name,
-                net_default_dev->ip_addr[0],
-                net_default_dev->ip_addr[1],
-                net_default_dev->ip_addr[2],
-                net_default_dev->ip_addr[3]);
-        fclose(logfile);
-    }
+    /* RETRY LOOP: Socket creation may fail initially after PPP connect */
+    /* Keep trying for up to 60 seconds with 3-second delays */
+    int retry_count = 0;
+    int max_retries = 20;  /* 20 attempts × 3 seconds = 60 seconds max */
 
-    /* Create socket - use IPPROTO_TCP like ClassiCube does */
-    printf("DC Now: Calling socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)...\n");
-    printf("DC Now: AF_INET=%d, SOCK_STREAM=%d, IPPROTO_TCP=%d\n", AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    printf("DC Now: socket() returned %d\n", sock);
-
-    if (sock < 0) {
-        last_socket_errno = errno;  /* Save errno for display */
-        printf("DC Now: ERROR - socket() returned %d, errno=%d\n", sock, errno);
-
-        /* Log to SD card */
-        logfile = fopen("/ram/DCNOW_LOG.TXT", "a");
-        if (logfile) {
-            fprintf(logfile, "SOCKET ERROR: socket()=%d, errno=%d\n", sock, errno);
-            fclose(logfile);
+    for (retry_count = 0; retry_count < max_retries; retry_count++) {
+        if (retry_count > 0) {
+            printf("DC Now: Socket retry %d/%d, waiting 3 seconds...\n", retry_count + 1, max_retries);
+            thd_sleep(3000);  /* Wait 3 seconds between retries */
         }
 
+        printf("DC Now: Calling socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)... (attempt %d)\n", retry_count + 1);
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        printf("DC Now: socket() returned %d\n", sock);
+
+        if (sock >= 0) {
+            printf("DC Now: Socket created successfully on attempt %d (fd=%d)\n", retry_count + 1, sock);
+            break;  /* Success! */
+        }
+
+        /* Socket creation failed */
+        last_socket_errno = errno;
+        printf("DC Now: Socket attempt %d failed: errno=%d\n", retry_count + 1, errno);
+
         switch (errno) {
-            case EIO: printf("DC Now: I/O error - network device not ready\n"); break;
+            case EIO: printf("DC Now: I/O error - retrying...\n"); break;
             case EPROTONOSUPPORT: printf("DC Now: Protocol not supported\n"); break;
             case EMFILE: printf("DC Now: Too many open files\n"); break;
             case ENFILE: printf("DC Now: System file table full\n"); break;
@@ -167,6 +162,16 @@ static int http_get_request(const char* hostname, const char* path, char* respon
             case ENOBUFS: printf("DC Now: No buffer space available\n"); break;
             case ENOMEM: printf("DC Now: Out of memory\n"); break;
             default: printf("DC Now: Unknown socket error\n"); break;
+        }
+    }
+
+    /* Check if all retries failed */
+    if (sock < 0) {
+        printf("DC Now: ERROR - All %d socket attempts failed, errno=%d\n", max_retries, errno);
+        FILE* logfile = fopen("/ram/DCNOW_LOG.TXT", "a");
+        if (logfile) {
+            fprintf(logfile, "SOCKET ERROR: All %d attempts failed, errno=%d\n", max_retries, errno);
+            fclose(logfile);
         }
         return -2;  /* Socket creation failed */
     }
