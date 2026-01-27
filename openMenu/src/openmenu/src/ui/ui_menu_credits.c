@@ -1809,17 +1809,17 @@ static void dcnow_connection_status_callback(const char* message) {
     /* Black background box */
     draw_draw_quad(140, 190, 360, 100, 0xFF000000);
 
-    /* Draw text - white on black */
+    /* Draw text - white on black (roughly centered) */
     font_bmp_begin_draw();
     font_bmp_set_color(0xFFFFFFFF);
-    font_bmp_draw_centered(320, 215, "DC Now");
-    font_bmp_draw_centered(320, 240, message);
+    font_bmp_draw_main(240, 215, "DC Now");
+    font_bmp_draw_main(200, 240, message);
 
     pvr_list_finish();
     pvr_scene_finish();
 
     /* Hold frame so it's visible */
-    timer_spin_sleep(600);
+    thd_sleep(600);
 }
 
 void

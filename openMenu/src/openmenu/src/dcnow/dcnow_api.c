@@ -61,8 +61,9 @@ int dcnow_init(void) {
     }
 
     /* CRITICAL: Wait for BSD socket layer to initialize after PPP link */
-    printf("DC Now: Waiting for socket layer initialization...\n");
-    thd_sleep(2000);  /* 2 seconds - give BSD stack time to fully initialize */
+    /* PPP connections need significant time for the full TCP/IP stack to initialize */
+    printf("DC Now: Waiting for socket layer initialization (5 seconds)...\n");
+    thd_sleep(5000);  /* 5 seconds - PPP connections need longer initialization */
 
     printf("DC Now: Ready to create sockets\n");
     network_initialized = true;
@@ -116,8 +117,8 @@ static int http_get_request(const char* hostname, const char* path, char* respon
         fclose(logfile);
     }
 
-    /* Create socket - use 0 for default protocol (TCP for SOCK_STREAM) */
-    sock = socket(AF_INET, SOCK_STREAM, 0);
+    /* Create socket - explicitly specify IPPROTO_TCP (required for KOS PPP) */
+    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
     if (sock < 0) {
         last_socket_errno = errno;  /* Save errno for display */
