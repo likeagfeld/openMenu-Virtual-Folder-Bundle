@@ -1916,14 +1916,12 @@ handle_input_dcnow(enum control input) {
                 } else {
                     printf("DC Now: Connection successful\n");
 
-                    /* Show visible status during I/O initialization */
-                    dcnow_connection_status_callback("Initializing I/O layer...");
-                    thd_sleep(2000);
-                    dcnow_connection_status_callback("Waiting for socket layer...");
-                    thd_sleep(8000);  /* Total 10 seconds */
-                    dcnow_connection_status_callback("Priming sockets...");
+                    /* Wait 5 seconds like ClassiCube */
+                    dcnow_connection_status_callback("Starting in 5 seconds...");
+                    thd_sleep(5000);
 
                     /* Initialize DC Now API layer */
+                    dcnow_connection_status_callback("Initializing...");
                     int api_result = dcnow_init();
 
                     if (api_result < 0) {

@@ -100,9 +100,28 @@ int dcnow_net_early_init(void) {
     }
 
     /* ppp_connect() is BLOCKING - returns when connection is established */
-    /* Match ClassiCube: just return, no testing, no waiting */
     update_status("Connected!");
     printf("DC Now: ppp_connect() succeeded\n");
+
+    /* Verify we have IP and DNS configuration */
+    if (net_default_dev) {
+        printf("DC Now: IP: %d.%d.%d.%d\n",
+               net_default_dev->ip_addr[0],
+               net_default_dev->ip_addr[1],
+               net_default_dev->ip_addr[2],
+               net_default_dev->ip_addr[3]);
+        printf("DC Now: Gateway: %d.%d.%d.%d\n",
+               net_default_dev->gateway[0],
+               net_default_dev->gateway[1],
+               net_default_dev->gateway[2],
+               net_default_dev->gateway[3]);
+        printf("DC Now: DNS: %d.%d.%d.%d\n",
+               net_default_dev->dns[0],
+               net_default_dev->dns[1],
+               net_default_dev->dns[2],
+               net_default_dev->dns[3]);
+    }
+
     return 0;
 
 #else
