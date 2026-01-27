@@ -114,6 +114,7 @@ static int http_get_request(const char* hostname, const char* path, char* respon
     int total_received = 0;
     uint64_t start_time;
     uint64_t timeout_ticks;
+    FILE* logfile;
 
     /* Verify network is still available */
     if (!net_default_dev) {
