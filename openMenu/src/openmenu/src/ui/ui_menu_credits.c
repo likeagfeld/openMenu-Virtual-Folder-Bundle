@@ -1838,7 +1838,7 @@ dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_pt
     } else if (!dcnow_net_initialized) {
         /* Show message prompting user to connect */
         memset(&dcnow_data, 0, sizeof(dcnow_data));
-        strcpy(dcnow_data.error_message, "Not connected - select Connect to begin");
+        strcpy(dcnow_data.error_message, "Not connected");
         dcnow_data.data_valid = false;
     }
 }
@@ -1876,14 +1876,7 @@ void
 handle_input_dcnow(enum control input) {
     switch (input) {
         case A: {
-            /* Close popup on A button */
-            *state_ptr = DRAW_UI;
-        } break;
-        case B: {
-            /* Close popup on B button */
-            *state_ptr = DRAW_UI;
-        } break;
-        case START: {
+            /* A button: Connect or Refresh */
             if (!dcnow_net_initialized) {
                 /* Connect to DreamPi */
                 render_connection_frame("Connecting to DreamPi...");
@@ -1925,6 +1918,13 @@ handle_input_dcnow(enum control input) {
 
                 dcnow_is_loading = false;
             }
+        } break;
+        case B: {
+            /* B button: Close DC Now menu */
+            *state_ptr = DRAW_UI;
+        } break;
+        case START: {
+            /* START button: Do nothing (let it close the menu naturally) */
         } break;
         case UP: {
             /* Scroll up through game list */
@@ -2047,10 +2047,12 @@ draw_dcnow_tr(void) {
             font_bmp_draw_main(x_item, cur_y, dcnow_data.error_message);
             cur_y += line_height;
             if (!dcnow_net_initialized) {
-                font_bmp_draw_main(x_item, cur_y, "Press START to connect");
+                font_bmp_draw_main(x_item, cur_y, "Press A to connect");
             } else {
-                font_bmp_draw_main(x_item, cur_y, "Press START to retry");
+                font_bmp_draw_main(x_item, cur_y, "Press A to retry");
             }
+            cur_y += line_height;
+            font_bmp_draw_main(x_item, cur_y, "Press B to close");
             cur_y += line_height;
         }
 
@@ -2134,10 +2136,12 @@ draw_dcnow_tr(void) {
             font_bmf_draw(x_item, cur_y, text_color, dcnow_data.error_message);
             cur_y += line_height;
             if (!dcnow_net_initialized) {
-                font_bmf_draw(x_item, cur_y, text_color, "Press START to connect");
+                font_bmf_draw(x_item, cur_y, text_color, "Press A to connect");
             } else {
-                font_bmf_draw(x_item, cur_y, text_color, "Press START to retry");
+                font_bmf_draw(x_item, cur_y, text_color, "Press A to retry");
             }
+            cur_y += line_height;
+            font_bmf_draw(x_item, cur_y, text_color, "Press B to close");
         }
 
         /* Close */
