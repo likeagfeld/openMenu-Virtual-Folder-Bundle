@@ -1739,16 +1739,31 @@ draw_psx_launcher_tr(void) {
  * DC Now (dreamcast.online/now) Player Status Popup
  */
 #include "../dcnow/dcnow_api.h"
+#include "../dcnow/dcnow_net_init.h"
 
 static dcnow_data_t dcnow_data;
 static int dcnow_choice = 0;
 static bool dcnow_data_fetched = false;
 static bool dcnow_is_loading = false;
+static bool dcnow_net_initialized = false;
 
 void
 dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_ptr, uint32_t title_color) {
     popup_setup(state, _colors, timeout_ptr, title_color);
     dcnow_choice = 0;
+
+    /* Initialize network on first use (lazy initialization) */
+    /* This happens when user presses L+R, not at boot */
+    if (!dcnow_net_initialized) {
+        printf("DC Now: Initializing network (first use)...\n");
+        int net_result = dcnow_net_early_init();
+        if (net_result < 0) {
+            printf("DC Now: Network init failed: %d\n", net_result);
+        } else {
+            printf("DC Now: Network initialized successfully\n");
+        }
+        dcnow_net_initialized = true;  /* Mark as attempted regardless of success */
+    }
 
     /* Try to fetch data if we haven't already */
     if (!dcnow_data_fetched && !dcnow_is_loading) {
