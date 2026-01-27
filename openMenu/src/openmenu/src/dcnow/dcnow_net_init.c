@@ -1,5 +1,6 @@
 #include "dcnow_net_init.h"
 #include <stdio.h>
+#include <string.h>
 
 #ifdef _arch_dreamcast
 #include <kos.h>
@@ -7,83 +8,89 @@
 #include <ppp/ppp.h>
 #include <dc/modem/modem.h>
 #include <arch/timer.h>
+#include <dc/pvr.h>
 #endif
+
+/* Status callback for visual feedback */
+static dcnow_status_callback_t status_callback = NULL;
+
+void dcnow_set_status_callback(dcnow_status_callback_t callback) {
+    status_callback = callback;
+}
+
+static void update_status(const char* message) {
+    printf("%s\n", message);
+    if (status_callback) {
+        status_callback(message);
+        /* Give PVR time to render the update */
+        pvr_wait_ready();
+        pvr_scene_begin();
+        status_callback(message);  /* Callback draws the message */
+        pvr_scene_finish();
+    }
+}
 
 int dcnow_net_early_init(void) {
 #ifdef _arch_dreamcast
-    printf("DC Now: Early network initialization...\n");
+    update_status("Initializing network...");
 
     /* Check if BBA is already active (like ClassiCube does) */
     if (net_default_dev) {
-        printf("DC Now: Network already initialized (BBA detected)\n");
-        printf("DC Now: Device: %s\n", net_default_dev->name);
+        update_status("Network ready (BBA detected)");
         return 0;  /* BBA already active, we're done */
     }
 
     /* No BBA detected - try modem initialization (DreamPi dial-up) */
-    printf("DC Now: No BBA detected, attempting DreamPi modem dial-up...\n");
+    update_status("Initializing modem...");
 
     /* Initialize modem hardware FIRST (like ClassiCube does) */
-    printf("DC Now: Initializing modem hardware...\n");
     if (!modem_init()) {
-        printf("DC Now: Modem hardware initialization failed\n");
-        printf("DC Now: DC Now feature will be unavailable\n");
+        update_status("Modem init failed!");
         return -1;
     }
-    printf("DC Now: Modem hardware initialized\n");
 
     /* Initialize PPP subsystem */
-    printf("DC Now: Initializing PPP subsystem...\n");
     if (ppp_init() < 0) {
-        printf("DC Now: Failed to initialize PPP subsystem\n");
+        update_status("PPP init failed!");
         return -2;
     }
 
     /* Dial modem (using DreamPi dummy number like ClassiCube) */
-    /* ClassiCube uses "111111111111", DreamPi typically uses "555" */
-    printf("DC Now: Dialing DreamPi (this can take ~20 seconds)...\n");
+    update_status("Dialing DreamPi...");
     int err = ppp_modem_init("555", 1, NULL);
     if (err) {
-        printf("DC Now: Failed to dial modem (error %d)\n", err);
+        update_status("Dial failed!");
         ppp_shutdown();
         return -3;
     }
 
     /* Set login credentials (ClassiCube uses "dream"/"dreamcast") */
-    printf("DC Now: Setting PPP login credentials...\n");
     if (ppp_set_login("dream", "dreamcast") < 0) {
-        printf("DC Now: Failed to set login credentials\n");
+        update_status("Login setup failed!");
         ppp_shutdown();
         return -4;
     }
 
     /* Establish PPP connection */
-    printf("DC Now: Connecting PPP (this can take ~20 seconds)...\n");
+    update_status("Connecting...");
     err = ppp_connect();
     if (err) {
-        printf("DC Now: Failed to connect PPP (error %d)\n", err);
+        update_status("Connection failed!");
         ppp_shutdown();
         return -5;
     }
 
-    printf("DC Now: PPP connection initiated, waiting for link up...\n");
+    update_status("Waiting for link...");
 
     /* Wait for PPP connection to be established (max 40 seconds for safety) */
     int wait_count = 0;
     int max_wait = 400; /* 40 seconds at 100ms intervals */
+    char status_msg[64];
 
     while (wait_count < max_wait) {
         /* Check if link is up by verifying device exists and has an IP */
         if (net_default_dev && net_default_dev->ip_addr[0] != 0) {
-            printf("DC Now: PPP connection established!\n");
-
-            /* Display connection info */
-            printf("DC Now: IP Address: %d.%d.%d.%d\n",
-                   net_default_dev->ip_addr[0],
-                   net_default_dev->ip_addr[1],
-                   net_default_dev->ip_addr[2],
-                   net_default_dev->ip_addr[3]);
-
+            update_status("Connected!");
             return 0;  /* Success! */
         }
 
@@ -91,21 +98,15 @@ int dcnow_net_early_init(void) {
         timer_spin_sleep(100);
         wait_count++;
 
-        /* Print progress every 5 seconds */
-        if (wait_count % 50 == 0) {
-            printf("DC Now: Still waiting for connection (%d/%d seconds)...\n",
-                   wait_count / 10, max_wait / 10);
+        /* Update progress every 2 seconds */
+        if (wait_count % 20 == 0) {
+            snprintf(status_msg, sizeof(status_msg), "Waiting... (%d sec)", wait_count / 10);
+            update_status(status_msg);
         }
     }
 
     /* Timeout - connection failed */
-    printf("DC Now: PPP connection timeout after 40 seconds\n");
-    printf("DC Now: Please check:\n");
-    printf("DC Now:   - DreamPi is running and configured\n");
-    printf("DC Now:   - Phone line cable connected between DC and DreamPi\n");
-    printf("DC Now:   - DreamPi has internet connectivity\n");
-    printf("DC Now:   - DreamPi settings are correct\n");
-
+    update_status("Connection timeout!");
     ppp_shutdown();
     return -6;  /* Connection timeout */
 

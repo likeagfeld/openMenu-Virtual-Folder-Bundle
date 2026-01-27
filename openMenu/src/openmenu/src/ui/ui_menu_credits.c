@@ -1746,6 +1746,36 @@ static int dcnow_choice = 0;
 static bool dcnow_data_fetched = false;
 static bool dcnow_is_loading = false;
 static bool dcnow_net_initialized = false;
+static char connection_status[128] = "";
+
+/* Visual callback for network connection status */
+static void dcnow_connection_status_callback(const char* message) {
+    /* Store the message for rendering */
+    strncpy(connection_status, message, sizeof(connection_status) - 1);
+    connection_status[sizeof(connection_status) - 1] = '\0';
+
+    /* Draw a status box in center of screen */
+    pvr_wait_ready();
+    pvr_scene_begin();
+
+    /* Black background */
+    draw_set_color(0xFF000000);
+    draw_draw_box(160, 200, 320, 80);
+
+    /* White border */
+    draw_set_color(0xFFFFFFFF);
+    draw_draw_box_outline(160, 200, 320, 80);
+
+    /* Title */
+    font_bmp_set_color(0xFFFFFFFF);
+    font_bmp_draw_centered(320, 215, "DC Now - Connecting");
+
+    /* Status message */
+    font_bmp_set_color(0xFFFFFF00);  /* Yellow */
+    font_bmp_draw_centered(320, 245, message);
+
+    pvr_scene_finish();
+}
 
 void
 dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_ptr, uint32_t title_color) {
@@ -1755,8 +1785,15 @@ dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_pt
     /* Initialize network on first use (lazy initialization) */
     /* This happens when user presses L+R, not at boot */
     if (!dcnow_net_initialized) {
+        /* Set up visual callback for connection status */
+        dcnow_set_status_callback(dcnow_connection_status_callback);
+
         printf("DC Now: Initializing network (first use)...\n");
         int net_result = dcnow_net_early_init();
+
+        /* Clear the callback */
+        dcnow_set_status_callback(NULL);
+
         if (net_result < 0) {
             printf("DC Now: Network init failed: %d\n", net_result);
         } else {

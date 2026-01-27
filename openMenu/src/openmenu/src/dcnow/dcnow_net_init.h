@@ -2,6 +2,19 @@
 #define DCNOW_NET_INIT_H
 
 /**
+ * Status callback for network initialization
+ * Called during network init to provide visual feedback
+ * @param message - Status message to display (e.g., "Dialing modem...")
+ */
+typedef void (*dcnow_status_callback_t)(const char* message);
+
+/**
+ * Set status callback for visual feedback during network initialization
+ * @param callback - Function to call with status updates (NULL to disable)
+ */
+void dcnow_set_status_callback(dcnow_status_callback_t callback);
+
+/**
  * Initialize network for DreamPi or BBA with automatic modem dialing
  *
  * Based on ClassiCube's proven implementation approach.
