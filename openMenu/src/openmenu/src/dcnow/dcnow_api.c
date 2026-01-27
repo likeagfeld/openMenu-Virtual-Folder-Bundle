@@ -141,8 +141,9 @@ static int http_get_request(const char* hostname, const char* path, char* respon
             thd_sleep(3000);  /* Wait 3 seconds between retries */
         }
 
-        printf("DC Now: Calling socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)... (attempt %d)\n", retry_count + 1);
-        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        /* Try socket creation - use 0 instead of IPPROTO_TCP (some KOS examples use this) */
+        printf("DC Now: Calling socket(AF_INET, SOCK_STREAM, 0)... (attempt %d)\n", retry_count + 1);
+        sock = socket(AF_INET, SOCK_STREAM, 0);
         printf("DC Now: socket() returned %d\n", sock);
 
         if (sock >= 0) {

@@ -122,6 +122,14 @@ int dcnow_net_early_init(void) {
                net_default_dev->dns[3]);
     }
 
+    /* Give PPP background thread time to process packets */
+    update_status("Stabilizing connection...");
+    printf("DC Now: Yielding to PPP thread...\n");
+    for (int i = 0; i < 100; i++) {
+        thd_pass();  /* Yield to other threads */
+    }
+    timer_spin_sleep(2000);  /* Wait 2 seconds for good measure */
+
     return 0;
 
 #else
