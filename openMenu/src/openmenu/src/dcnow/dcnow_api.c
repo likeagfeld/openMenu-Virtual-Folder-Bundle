@@ -122,9 +122,9 @@ static int http_get_request(const char* hostname, const char* path, char* respon
         return -2;
     }
 
-    /* Create socket - use IPPROTO_TCP like ClassiCube does */
+    /* Create socket - KOS lwIP requires protocol=0, NOT IPPROTO_TCP! */
     printf("DC Now: Creating socket...\n");
-    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sock = socket(AF_INET, SOCK_STREAM, 0);
 
     if (sock < 0) {
         last_socket_errno = errno;
