@@ -1884,9 +1884,9 @@ handle_input_dcnow(enum control input) {
             /* A button: Connect or Refresh */
             if (!dcnow_net_initialized) {
                 /* Connect to DreamPi */
-                render_connection_frame("Connecting to DreamPi...");
+                printf("DC Now: Starting connection...\n");
 
-                printf("DC Now: Connecting to DreamPi...\n");
+                /* Initialize network/modem */
                 int net_result = dcnow_net_early_init();
 
                 if (net_result < 0) {
@@ -1895,30 +1895,46 @@ handle_input_dcnow(enum control input) {
                     snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
                             "Connection failed (error %d)", net_result);
                     dcnow_data.data_valid = false;
+                    dcnow_net_initialized = true;  /* Mark as attempted */
                 } else {
-                    printf("DC Now: Connected successfully\n");
-                    dcnow_net_initialized = true;
+                    printf("DC Now: Connection successful\n");
 
-                    /* Now fetch data */
-                    render_connection_frame("Fetching player data...");
-                    dcnow_is_loading = true;
-                    int result = dcnow_fetch_data(&dcnow_data, 5000);
-                    if (result == 0) {
-                        dcnow_data_fetched = true;
+                    /* Initialize DC Now API layer */
+                    int api_result = dcnow_init();
+                    if (api_result < 0) {
+                        printf("DC Now: API init failed: %d\n", api_result);
+                        memset(&dcnow_data, 0, sizeof(dcnow_data));
+                        strcpy(dcnow_data.error_message, "API initialization failed");
+                        dcnow_data.data_valid = false;
+                    } else {
+                        printf("DC Now: API ready, fetching data...\n");
+
+                        /* Now fetch data */
+                        dcnow_is_loading = true;
+                        int result = dcnow_fetch_data(&dcnow_data, 5000);
+                        if (result == 0) {
+                            dcnow_data_fetched = true;
+                            printf("DC Now: Data fetched successfully\n");
+                        } else {
+                            printf("DC Now: Data fetch failed: %d\n", result);
+                        }
+                        dcnow_is_loading = false;
                     }
-                    dcnow_is_loading = false;
-                }
 
-                dcnow_net_initialized = true;  /* Mark as attempted */
+                    dcnow_net_initialized = true;
+                }
             } else {
                 /* Already connected - refresh data */
-                render_connection_frame("Refreshing player data...");
+                printf("DC Now: Refreshing data...\n");
                 dcnow_data_fetched = false;
                 dcnow_is_loading = true;
 
                 int result = dcnow_fetch_data(&dcnow_data, 5000);
                 if (result == 0) {
                     dcnow_data_fetched = true;
+                    printf("DC Now: Data refreshed successfully\n");
+                } else {
+                    printf("DC Now: Data refresh failed: %d\n", result);
                 }
 
                 dcnow_is_loading = false;
