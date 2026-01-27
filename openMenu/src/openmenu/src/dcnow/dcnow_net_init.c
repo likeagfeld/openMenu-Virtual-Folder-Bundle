@@ -99,35 +99,11 @@ int dcnow_net_early_init(void) {
         return -5;
     }
 
-    update_status("Waiting for link...");
-
-    /* Wait for PPP connection to be established (max 40 seconds for safety) */
-    int wait_count = 0;
-    int max_wait = 400; /* 40 seconds at 100ms intervals */
-    char status_msg[64];
-
-    while (wait_count < max_wait) {
-        /* Check if link is up by verifying device exists and has an IP */
-        if (net_default_dev && net_default_dev->ip_addr[0] != 0) {
-            update_status("Connected!");
-            return 0;  /* Success! */
-        }
-
-        /* Wait 100ms before checking again */
-        timer_spin_sleep(100);
-        wait_count++;
-
-        /* Update progress every 2 seconds */
-        if (wait_count % 20 == 0) {
-            snprintf(status_msg, sizeof(status_msg), "Waiting... (%d sec)", wait_count / 10);
-            update_status(status_msg);
-        }
-    }
-
-    /* Timeout - connection failed */
-    update_status("Connection timeout!");
-    ppp_shutdown();
-    return -6;  /* Connection timeout */
+    /* ppp_connect() is BLOCKING - returns when connection is established */
+    /* Match ClassiCube: just return, no testing, no waiting */
+    update_status("Connected!");
+    printf("DC Now: ppp_connect() succeeded\n");
+    return 0;
 
 #else
     /* Non-Dreamcast - no network */
