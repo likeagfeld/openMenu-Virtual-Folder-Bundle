@@ -103,11 +103,31 @@ static int http_get_request(const char* hostname, const char* path, char* respon
            net_default_dev->ip_addr[2],
            net_default_dev->ip_addr[3]);
 
+    /* Log to SD card */
+    FILE* logfile = fopen("/cd/DCNOW_LOG.TXT", "a");
+    if (logfile) {
+        fprintf(logfile, "Creating socket: Device=%s, IP=%d.%d.%d.%d\n",
+                net_default_dev->name,
+                net_default_dev->ip_addr[0],
+                net_default_dev->ip_addr[1],
+                net_default_dev->ip_addr[2],
+                net_default_dev->ip_addr[3]);
+        fclose(logfile);
+    }
+
     /* Create socket - use 0 for default protocol (TCP for SOCK_STREAM) */
     sock = socket(AF_INET, SOCK_STREAM, 0);
 
     if (sock < 0) {
         printf("DC Now: ERROR - socket() returned %d, errno=%d\n", sock, errno);
+
+        /* Log to SD card */
+        logfile = fopen("/cd/DCNOW_LOG.TXT", "a");
+        if (logfile) {
+            fprintf(logfile, "SOCKET ERROR: socket()=%d, errno=%d\n", sock, errno);
+            fclose(logfile);
+        }
+
         switch (errno) {
             case EPROTONOSUPPORT: printf("DC Now: Protocol not supported\n"); break;
             case EMFILE: printf("DC Now: Too many open files\n"); break;
@@ -121,6 +141,13 @@ static int http_get_request(const char* hostname, const char* path, char* respon
     }
 
     printf("DC Now: Socket created successfully (fd=%d)\n", sock);
+
+    /* Log success to SD card */
+    logfile = fopen("/cd/DCNOW_LOG.TXT", "a");
+    if (logfile) {
+        fprintf(logfile, "Socket created: fd=%d\n", sock);
+        fclose(logfile);
+    }
 
     /* Resolve hostname */
     printf("DC Now: Resolving %s...\n", hostname);
