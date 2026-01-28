@@ -1858,6 +1858,7 @@ static int dcnow_choice = 0;
 static int dcnow_scroll_offset = 0;  /* Scroll offset for viewing large game lists */
 static bool dcnow_data_fetched = false;
 static bool dcnow_is_loading = false;
+static bool dcnow_needs_fetch = false;  /* Flag to trigger fetch on next frame */
 static bool dcnow_net_initialized = false;
 static char connection_status[128] = "";
 
@@ -2005,25 +2006,16 @@ handle_input_dcnow(enum control input) {
                     dcnow_data.data_valid = false;
                 }
             } else {
-                /* Already connected - refresh data */
-                printf("DC Now: Refreshing data...\n");
+                /* Already connected - trigger refresh on next frame */
+                printf("DC Now: Requesting refresh...\n");
 
                 /* Clear old data and show loading state */
                 dcnow_data_fetched = false;
                 dcnow_data.data_valid = false;
                 dcnow_is_loading = true;
+                dcnow_needs_fetch = true;
                 dcnow_choice = 0;
                 dcnow_scroll_offset = 0;
-
-                int result = dcnow_fetch_data(&dcnow_data, 5000);
-                if (result == 0) {
-                    dcnow_data_fetched = true;
-                    printf("DC Now: Data refreshed successfully\n");
-                } else {
-                    printf("DC Now: Data refresh failed: %d\n", result);
-                }
-
-                dcnow_is_loading = false;
             }
         } break;
         case B: {
@@ -2067,6 +2059,22 @@ void
 draw_dcnow_tr(void) {
     z_set_cond(205.0f);
 
+    /* Check if we need to fetch data (deferred from input handler) */
+    if (dcnow_needs_fetch) {
+        dcnow_needs_fetch = false;
+        printf("DC Now: Fetching data...\n");
+
+        int result = dcnow_fetch_data(&dcnow_data, 5000);
+        if (result == 0) {
+            dcnow_data_fetched = true;
+            printf("DC Now: Data refreshed successfully\n");
+        } else {
+            printf("DC Now: Data refresh failed: %d\n", result);
+        }
+
+        dcnow_is_loading = false;
+    }
+
     if (sf_ui[0] == UI_SCROLL || sf_ui[0] == UI_FOLDERS) {
         /* Scroll/Folders mode - use bitmap font */
         const int line_height = 20;
@@ -2076,11 +2084,18 @@ draw_dcnow_tr(void) {
 
         /* Calculate width based on content */
         int max_line_len = 30;  /* "Dreamcast Live - Online Now" */
-        const int icon_space = 28;  /* 24px icon + 4px gap */
+        const int icon_space = 32;  /* Extra space for 24px icon + 8px gap */
+
+        /* Check instruction text length */
+        const char* instructions = "Push A to Refresh  |  Push B to Close";
+        int instr_len = strlen(instructions);
+        if (instr_len > max_line_len) {
+            max_line_len = instr_len;
+        }
 
         if (dcnow_data.data_valid) {
             for (int i = 0; i < dcnow_data.game_count; i++) {
-                int len = strlen(dcnow_data.games[i].game_name) + 10;  /* name + " - 999 players" */
+                int len = strlen(dcnow_data.games[i].game_name) + 15;  /* name + " - 999 players" + margin */
                 if (len > max_line_len) {
                     max_line_len = len;
                 }
@@ -2092,7 +2107,7 @@ draw_dcnow_tr(void) {
             }
         }
 
-        const int width = max_line_len * 8 + padding + icon_space;
+        const int width = (max_line_len * 8) + padding + icon_space;
 
         int num_lines = 2;  /* Title + total players line */
         if (dcnow_data.data_valid) {
@@ -2232,10 +2247,27 @@ draw_dcnow_tr(void) {
         const int title_gap = line_height / 2;
         const int padding = 20;
         const int max_visible_games = 8;
-        const int icon_space = 38;  /* 32px icon + 6px gap */
+        const int icon_space = 40;  /* 32px icon + 8px gap */
 
         /* Calculate width based on content */
-        int max_line_len = 300 + icon_space;  /* Title width estimate + icon space */
+        int max_line_len = 35;  /* Base width for title */
+
+        /* Check instruction text length (vector font is ~10 pixels per char) */
+        const char* instructions = "Push A to Refresh  |  Push B to Close";
+        int instr_len = strlen(instructions);
+        if (instr_len > max_line_len) {
+            max_line_len = instr_len;
+        }
+
+        if (dcnow_data.data_valid) {
+            for (int i = 0; i < dcnow_data.game_count; i++) {
+                /* Estimate character width for vector font (~10 pixels/char) */
+                int len = strlen(dcnow_data.games[i].game_name) + 15;
+                if (len > max_line_len) {
+                    max_line_len = len;
+                }
+            }
+        }
 
         int num_lines = 2;  /* Title + total */
         if (dcnow_data.data_valid) {
@@ -2245,7 +2277,7 @@ draw_dcnow_tr(void) {
             num_lines += 2;  /* Error + instructions */
         }
 
-        const int width = max_line_len + padding;
+        const int width = (max_line_len * 10) + padding + icon_space;
         const int height = num_lines * line_height + title_gap;
         const int x = (640 / 2) - (width / 2);
         const int y = (480 / 2) - (height / 2);
