@@ -1775,6 +1775,8 @@ draw_psx_launcher_tr(void) {
 #include "../dcnow/dcnow_net_init.h"
 #include "../texture/txr_manager.h"
 
+extern image img_empty_boxart;  /* Defined in draw_kos.c */
+
 static dcnow_data_t dcnow_data;
 static int dcnow_choice = 0;
 static int dcnow_scroll_offset = 0;  /* Scroll offset for viewing large game lists */
@@ -1929,7 +1931,10 @@ handle_input_dcnow(enum control input) {
             } else {
                 /* Already connected - refresh data */
                 printf("DC Now: Refreshing data...\n");
+
+                /* Clear old data and show loading state */
                 dcnow_data_fetched = false;
+                dcnow_data.data_valid = false;
                 dcnow_is_loading = true;
                 dcnow_choice = 0;
                 dcnow_scroll_offset = 0;
@@ -1995,6 +2000,8 @@ draw_dcnow_tr(void) {
 
         /* Calculate width based on content */
         int max_line_len = 30;  /* "Dreamcast Live - Online Now" */
+        const int icon_space = 28;  /* 24px icon + 4px gap */
+
         if (dcnow_data.data_valid) {
             for (int i = 0; i < dcnow_data.game_count; i++) {
                 int len = strlen(dcnow_data.games[i].game_name) + 10;  /* name + " - 999 players" */
@@ -2009,7 +2016,7 @@ draw_dcnow_tr(void) {
             }
         }
 
-        const int width = max_line_len * 8 + padding;
+        const int width = max_line_len * 8 + padding + icon_space;
 
         int num_lines = 2;  /* Title + total players line */
         if (dcnow_data.data_valid) {
@@ -2040,7 +2047,7 @@ draw_dcnow_tr(void) {
         if (dcnow_is_loading) {
             /* Show loading message */
             font_bmp_set_color(text_color);
-            font_bmp_draw_main(x_item, cur_y, "Loading...");
+            font_bmp_draw_main(x_item, cur_y, "Refreshing... Please Wait");
             cur_y += line_height;
         } else if (dcnow_data.data_valid) {
             /* Show total players */
@@ -2068,9 +2075,18 @@ draw_dcnow_tr(void) {
                     image game_icon;
                     bool has_icon = false;
                     if (dcnow_data.games[game_idx].game_code[0] != '\0') {
+                        printf("DC Now UI: Looking for texture '%s'\n", dcnow_data.games[game_idx].game_code);
                         if (txr_get_small(dcnow_data.games[game_idx].game_code, &game_icon) == 0) {
-                            has_icon = true;
+                            /* Check if we got a real texture or just the empty placeholder */
+                            if (game_icon.texture != img_empty_boxart.texture) {
+                                has_icon = true;
+                                printf("DC Now UI: Found texture for '%s'\n", dcnow_data.games[game_idx].game_code);
+                            } else {
+                                printf("DC Now UI: No texture found for '%s'\n", dcnow_data.games[game_idx].game_code);
+                            }
                         }
+                    } else {
+                        printf("DC Now UI: Game %d has empty code\n", game_idx);
                     }
 
                     /* Draw box art icon if available (24x24 pixels) */
@@ -2136,9 +2152,10 @@ draw_dcnow_tr(void) {
         const int title_gap = line_height / 2;
         const int padding = 20;
         const int max_visible_games = 8;
+        const int icon_space = 38;  /* 32px icon + 6px gap */
 
         /* Calculate width based on content */
-        int max_line_len = 300;  /* Title width estimate */
+        int max_line_len = 300 + icon_space;  /* Title width estimate + icon space */
 
         int num_lines = 2;  /* Title + total */
         if (dcnow_data.data_valid) {
@@ -2166,7 +2183,7 @@ draw_dcnow_tr(void) {
 
         if (dcnow_is_loading) {
             cur_y += line_height;
-            font_bmf_draw(x_item, cur_y, text_color, "Loading...");
+            font_bmf_draw(x_item, cur_y, text_color, "Refreshing... Please Wait");
         } else if (dcnow_data.data_valid) {
             /* Total players */
             cur_y += line_height;
@@ -2194,7 +2211,10 @@ draw_dcnow_tr(void) {
                     bool has_icon = false;
                     if (dcnow_data.games[game_idx].game_code[0] != '\0') {
                         if (txr_get_small(dcnow_data.games[game_idx].game_code, &game_icon) == 0) {
-                            has_icon = true;
+                            /* Check if we got a real texture or just the empty placeholder */
+                            if (game_icon.texture != img_empty_boxart.texture) {
+                                has_icon = true;
+                            }
                         }
                     }
 
