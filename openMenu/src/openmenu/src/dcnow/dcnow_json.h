@@ -12,10 +12,12 @@
 /* Maximum values for parsing */
 #define JSON_MAX_GAMES 32
 #define JSON_MAX_NAME_LEN 64
+#define JSON_MAX_CODE_LEN 16
 
 /* Parsed game structure */
 typedef struct {
-    char name[JSON_MAX_NAME_LEN];
+    char name[JSON_MAX_NAME_LEN];      /* Display name (e.g., "Phantasy Star Online") */
+    char code[JSON_MAX_CODE_LEN];      /* Short code (e.g., "PSO") */
     int players;
 } json_game_t;
 

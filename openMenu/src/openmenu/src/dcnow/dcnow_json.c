@@ -145,13 +145,22 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
         users_val++;  /* Skip opening brace */
         user_count++;
 
-        /* Find current_game_display field */
-        const char* game_val = find_key(users_val, "current_game_display");
+        /* Find current_game_display field (full name) */
+        const char* game_display_val = find_key(users_val, "current_game_display");
+        /* Find current_game field (short code) */
+        const char* game_code_val = find_key(users_val, "current_game");
         bool has_game = false;
 
-        if (game_val && *game_val == '"') {
+        if (game_display_val && *game_display_val == '"') {
             char game_name[JSON_MAX_NAME_LEN];
-            const char* next = parse_string(game_val, game_name, JSON_MAX_NAME_LEN);
+            char game_code[JSON_MAX_CODE_LEN];
+            const char* next = parse_string(game_display_val, game_name, JSON_MAX_NAME_LEN);
+
+            /* Also extract the game code if present */
+            game_code[0] = '\0';
+            if (game_code_val && *game_code_val == '"') {
+                parse_string(game_code_val, game_code, JSON_MAX_CODE_LEN);
+            }
 
             if (next && game_name[0] != '\0') {
                 /* User has a game */
@@ -174,6 +183,8 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
                     /* Add new game */
                     strncpy(result->games[result->game_count].name, game_name, JSON_MAX_NAME_LEN - 1);
                     result->games[result->game_count].name[JSON_MAX_NAME_LEN - 1] = '\0';
+                    strncpy(result->games[result->game_count].code, game_code, JSON_MAX_CODE_LEN - 1);
+                    result->games[result->game_count].code[JSON_MAX_CODE_LEN - 1] = '\0';
                     result->games[result->game_count].players = 1;
                     result->game_count++;
                 }

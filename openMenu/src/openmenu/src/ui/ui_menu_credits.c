@@ -1773,6 +1773,7 @@ draw_psx_launcher_tr(void) {
  */
 #include "../dcnow/dcnow_api.h"
 #include "../dcnow/dcnow_net_init.h"
+#include "../texture/txr_manager.h"
 
 static dcnow_data_t dcnow_data;
 static int dcnow_choice = 0;
@@ -2063,6 +2064,23 @@ draw_dcnow_tr(void) {
                     int game_idx = dcnow_scroll_offset + i;
                     if (game_idx >= dcnow_data.game_count) break;
 
+                    /* Try to load box art icon for this game */
+                    image game_icon;
+                    bool has_icon = false;
+                    if (dcnow_data.games[game_idx].game_code[0] != '\0') {
+                        if (txr_get_small(dcnow_data.games[game_idx].game_code, &game_icon) == 0) {
+                            has_icon = true;
+                        }
+                    }
+
+                    /* Draw box art icon if available (24x24 pixels) */
+                    int text_x = x_item;
+                    if (has_icon) {
+                        const int icon_size = 24;
+                        draw_draw_image(x_item, cur_y - 2, icon_size, icon_size, COLOR_WHITE, &game_icon);
+                        text_x = x_item + icon_size + 4;  /* Icon + small gap */
+                    }
+
                     char game_buf[128];
                     const char* status = dcnow_data.games[game_idx].is_active ? "" : " (offline)";
 
@@ -2079,7 +2097,7 @@ draw_dcnow_tr(void) {
                     }
 
                     font_bmp_set_color(game_idx == dcnow_choice ? highlight_color : text_color);
-                    font_bmp_draw_main(x_item, cur_y, game_buf);
+                    font_bmp_draw_main(text_x, cur_y, game_buf);
                     cur_y += line_height;
                 }
 
@@ -2170,6 +2188,24 @@ draw_dcnow_tr(void) {
                     if (game_idx >= dcnow_data.game_count) break;
 
                     cur_y += line_height;
+
+                    /* Try to load box art icon for this game */
+                    image game_icon;
+                    bool has_icon = false;
+                    if (dcnow_data.games[game_idx].game_code[0] != '\0') {
+                        if (txr_get_small(dcnow_data.games[game_idx].game_code, &game_icon) == 0) {
+                            has_icon = true;
+                        }
+                    }
+
+                    /* Draw box art icon if available (32x32 pixels for vector font) */
+                    int text_x = x_item;
+                    if (has_icon) {
+                        const int icon_size = 32;
+                        draw_draw_image(x_item, cur_y - 4, icon_size, icon_size, COLOR_WHITE, &game_icon);
+                        text_x = x_item + icon_size + 6;  /* Icon + small gap */
+                    }
+
                     char game_buf[128];
                     const char* status = dcnow_data.games[game_idx].is_active ? "" : " (offline)";
 
@@ -2186,7 +2222,7 @@ draw_dcnow_tr(void) {
                     }
 
                     uint32_t color = (game_idx == dcnow_choice) ? highlight_color : text_color;
-                    font_bmf_draw_auto_size(x_item, cur_y, color, game_buf, width - 20);
+                    font_bmf_draw_auto_size(text_x, cur_y, color, game_buf, width - (text_x - x_item) - 20);
                 }
 
                 /* Show scroll indicators if needed */

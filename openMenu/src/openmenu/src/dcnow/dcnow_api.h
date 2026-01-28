@@ -10,11 +10,15 @@
 /* Maximum length for game names */
 #define MAX_GAME_NAME_LEN 64
 
+/* Maximum length for game codes (e.g., "PSO", "BROWSERS") */
+#define MAX_GAME_CODE_LEN 16
+
 /**
  * Structure representing a single game's active player data
  */
 typedef struct {
-    char game_name[MAX_GAME_NAME_LEN];
+    char game_name[MAX_GAME_NAME_LEN];   /* Display name (e.g., "Phantasy Star Online") */
+    char game_code[MAX_GAME_CODE_LEN];   /* Short code for texture lookup (e.g., "PSO") */
     int player_count;
     bool is_active;
 } dcnow_game_info_t;
