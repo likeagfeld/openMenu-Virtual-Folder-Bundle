@@ -220,6 +220,7 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
     if (users_without_games > 0 && result->game_count < JSON_MAX_GAMES) {
         strncpy(result->games[result->game_count].name, "Idle/Not in game", JSON_MAX_NAME_LEN - 1);
         result->games[result->game_count].name[JSON_MAX_NAME_LEN - 1] = '\0';
+        result->games[result->game_count].code[0] = '\0';  /* No box art for idle users */
         result->games[result->game_count].players = users_without_games;
         result->game_count++;
     }

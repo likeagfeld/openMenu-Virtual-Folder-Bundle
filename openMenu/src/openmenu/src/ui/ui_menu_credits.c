@@ -1777,6 +1777,82 @@ draw_psx_launcher_tr(void) {
 
 extern image img_empty_boxart;  /* Defined in draw_kos.c */
 
+/* Mapping from DC Now API game codes to openMenu product IDs for box art lookup */
+typedef struct {
+    const char* api_code;
+    const char* product_id;
+} dcnow_game_mapping_t;
+
+static const dcnow_game_mapping_t game_code_map[] = {
+    {"PSO", "PSO"},              /* Phantasy Star Online */
+    {"Q3", "Q3"},                /* Quake III Arena */
+    {"CHUCHU", "CHUCHU"},        /* ChuChu Rocket! */
+    {"BROWSERS", "BROWSERS"},     /* Web Browsers */
+    {"AFO", "AFO"},              /* Alien Front Online */
+    {"4X4", "4X4"},              /* 4x4 Evolution */
+    {"DAYTONA", "DAYTONA"},      /* Daytona USA */
+    {"OUTTRIG", "OUTTRIG"},      /* Outtrigger */
+    {"STARLNCR", "STARLNCR"},    /* Starlancer */
+    {"WWP", "WWP"},              /* Worms World Party */
+    {"DRIVSTRK", "DRIVSTRK"},    /* Driving Strikers */
+    {"POWSMASH", "POWSMASH"},    /* Power Smash / Virtua Tennis */
+    {"GUNDAM", "GUNDAM"},        /* Mobile Suit Gundam */
+    {"MONACO", "MONACO"},        /* Monaco Grand Prix Online */
+    {"POD", "POD"},              /* POD SpeedZone */
+    {"SPEDEVIL", "SPEDEVIL"},    /* Speed Devils Online */
+    {"NBA2K1", "NBA2K1"},        /* NBA 2K1 */
+    {"NBA2K2", "NBA2K2"},        /* NBA 2K2 */
+    {"NFL2K1", "NFL2K1"},        /* NFL 2K1 */
+    {"NFL2K2", "NFL2K2"},        /* NFL 2K2 */
+    {"NCAA2K2", "NCAA2K2"},      /* NCAA 2K2 */
+    {"WSB2K2", "WSB2K2"},        /* World Series Baseball 2K2 */
+    {"F355", "F355"},            /* Ferrari F355 Challenge */
+    {"OOGABOOGA", "OOGABOOGA"},  /* Ooga Booga */
+    {"TOYRACER", "TOYRACER"},    /* Toy Racer */
+    {"GOLF2", "GOLF2"},          /* Golf Shiyouyo 2 */
+    {"HUNDSWORD", "HUNDSWORD"},  /* Hundred Swords */
+    {"MAXPOOL", "MAXPOOL"},      /* Maximum Pool */
+    {"PBABOWL", "PBABOWL"},      /* PBA Tour Bowling 2001 */
+    {"NEXTTET", "NEXTTET"},      /* The Next Tetris */
+    {"SEGATET", "SEGATET"},      /* Sega Tetris */
+    {"SEGASWRL", "SEGASWRL"},    /* Sega Swirl */
+    {"PLANRING", "PLANRING"},    /* Planet Ring */
+    {"IGPACK", "IGPACK"},        /* Internet Game Pack */
+    {"DEEDEE", "DEEDEE"},        /* Dee Dee Planet */
+    {"AEROFD", "AEROFD"},        /* Aero Dancing FSD */
+    {"AEROI", "AEROI"},          /* Aero Dancing i */
+    {"AEROISD", "AEROISD"},      /* Aero Dancing iSD */
+    {"FLOIGAN", "FLOIGAN"},      /* Floigan Bros Episode 1 */
+    {"SA", "SA"},                /* Sonic Adventure */
+    {"SA2", "SA2"},              /* Sonic Adventure 2 */
+    {"JSR", "JSR"},              /* Jet Grind Radio / Jet Set Radio */
+    {"SHENMUE", "SHENMUE"},      /* Shenmue Passport */
+    {"CRAZYT2", "CRAZYT2"},      /* Crazy Taxi 2 */
+    {"MSR", "MSR"},              /* Metropolis Street Racer */
+    {"SAMBA", "SAMBA"},          /* Samba de Amigo */
+    {"SF2049", "SF2049"},        /* San Francisco Rush 2049 */
+    {"SEGAGT", "SEGAGT"},        /* Sega GT */
+    {"SWR", "SWR"},              /* Star Wars Episode I Racer */
+    {"CLASSIC", "CLASSIC"},      /* ClassiCube */
+    {NULL, NULL}                 /* Terminator */
+};
+
+/* Look up product ID from API game code */
+static const char* get_product_id_from_api_code(const char* api_code) {
+    if (!api_code || api_code[0] == '\0') {
+        return NULL;
+    }
+
+    for (int i = 0; game_code_map[i].api_code != NULL; i++) {
+        if (strcmp(game_code_map[i].api_code, api_code) == 0) {
+            return game_code_map[i].product_id;
+        }
+    }
+
+    /* If not found in map, try using the API code directly */
+    return api_code;
+}
+
 static dcnow_data_t dcnow_data;
 static int dcnow_choice = 0;
 static int dcnow_scroll_offset = 0;  /* Scroll offset for viewing large game lists */
@@ -2075,14 +2151,18 @@ draw_dcnow_tr(void) {
                     image game_icon;
                     bool has_icon = false;
                     if (dcnow_data.games[game_idx].game_code[0] != '\0') {
-                        printf("DC Now UI: Looking for texture '%s'\n", dcnow_data.games[game_idx].game_code);
-                        if (txr_get_small(dcnow_data.games[game_idx].game_code, &game_icon) == 0) {
+                        /* Map API code to product ID */
+                        const char* product_id = get_product_id_from_api_code(dcnow_data.games[game_idx].game_code);
+                        printf("DC Now UI: API code '%s' -> product ID '%s'\n",
+                               dcnow_data.games[game_idx].game_code, product_id);
+
+                        if (product_id && txr_get_small(product_id, &game_icon) == 0) {
                             /* Check if we got a real texture or just the empty placeholder */
                             if (game_icon.texture != img_empty_boxart.texture) {
                                 has_icon = true;
-                                printf("DC Now UI: Found texture for '%s'\n", dcnow_data.games[game_idx].game_code);
+                                printf("DC Now UI: Found texture for '%s'\n", product_id);
                             } else {
-                                printf("DC Now UI: No texture found for '%s'\n", dcnow_data.games[game_idx].game_code);
+                                printf("DC Now UI: No texture found for '%s'\n", product_id);
                             }
                         }
                     } else {
@@ -2210,7 +2290,10 @@ draw_dcnow_tr(void) {
                     image game_icon;
                     bool has_icon = false;
                     if (dcnow_data.games[game_idx].game_code[0] != '\0') {
-                        if (txr_get_small(dcnow_data.games[game_idx].game_code, &game_icon) == 0) {
+                        /* Map API code to product ID */
+                        const char* product_id = get_product_id_from_api_code(dcnow_data.games[game_idx].game_code);
+
+                        if (product_id && txr_get_small(product_id, &game_icon) == 0) {
                             /* Check if we got a real texture or just the empty placeholder */
                             if (game_icon.texture != img_empty_boxart.texture) {
                                 has_icon = true;
