@@ -1776,6 +1776,7 @@ draw_psx_launcher_tr(void) {
 
 static dcnow_data_t dcnow_data;
 static int dcnow_choice = 0;
+static int dcnow_scroll_offset = 0;  /* Scroll offset for viewing large game lists */
 static bool dcnow_data_fetched = false;
 static bool dcnow_is_loading = false;
 static bool dcnow_net_initialized = false;
@@ -1826,6 +1827,7 @@ void
 dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_ptr, uint32_t title_color) {
     popup_setup(state, _colors, timeout_ptr, title_color);
     dcnow_choice = 0;
+    dcnow_scroll_offset = 0;
 
     /* Set the draw state to DRAW_DCNOW_PLAYERS to actually show the DC Now menu */
     *state = DRAW_DCNOW_PLAYERS;
@@ -1928,6 +1930,8 @@ handle_input_dcnow(enum control input) {
                 printf("DC Now: Refreshing data...\n");
                 dcnow_data_fetched = false;
                 dcnow_is_loading = true;
+                dcnow_choice = 0;
+                dcnow_scroll_offset = 0;
 
                 int result = dcnow_fetch_data(&dcnow_data, 5000);
                 if (result == 0) {
@@ -1951,12 +1955,22 @@ handle_input_dcnow(enum control input) {
             /* Scroll up through game list */
             if (dcnow_data.data_valid && dcnow_choice > 0) {
                 dcnow_choice--;
+                /* Adjust scroll offset if selection goes above visible area */
+                if (dcnow_choice < dcnow_scroll_offset) {
+                    dcnow_scroll_offset = dcnow_choice;
+                }
             }
         } break;
         case DOWN: {
             /* Scroll down through game list */
-            if (dcnow_data.data_valid && dcnow_choice < dcnow_data.game_count) {
+            if (dcnow_data.data_valid && dcnow_choice < dcnow_data.game_count - 1) {
                 dcnow_choice++;
+                /* Adjust scroll offset if selection goes below visible area */
+                /* max_visible_games is 10 for bitmap font, 8 for vector font */
+                int max_visible = (sf_ui[0] == UI_SCROLL || sf_ui[0] == UI_FOLDERS) ? 10 : 8;
+                if (dcnow_choice >= dcnow_scroll_offset + max_visible) {
+                    dcnow_scroll_offset = dcnow_choice - max_visible + 1;
+                }
             }
         } break;
         default:
@@ -1999,9 +2013,9 @@ draw_dcnow_tr(void) {
         int num_lines = 2;  /* Title + total players line */
         if (dcnow_data.data_valid) {
             num_lines += (dcnow_data.game_count < max_visible_games ? dcnow_data.game_count : max_visible_games);
-            num_lines++;  /* Close button */
+            num_lines += 2;  /* Instructions (A to Refresh, B to Close) */
         } else {
-            num_lines += 2;  /* Error message + close button */
+            num_lines += 2;  /* Error message + instructions */
         }
 
         const int height = num_lines * line_height + title_gap;
@@ -2041,24 +2055,41 @@ draw_dcnow_tr(void) {
                 font_bmp_draw_main(x_item, cur_y, "No active games");
                 cur_y += line_height;
             } else {
-                for (int i = 0; i < dcnow_data.game_count && i < max_visible_games; i++) {
-                    char game_buf[128];
-                    const char* status = dcnow_data.games[i].is_active ? "" : " (offline)";
+                /* Show games with scrolling support */
+                int visible_count = (dcnow_data.game_count < max_visible_games) ?
+                                   dcnow_data.game_count : max_visible_games;
 
-                    if (dcnow_data.games[i].player_count == 1) {
+                for (int i = 0; i < visible_count; i++) {
+                    int game_idx = dcnow_scroll_offset + i;
+                    if (game_idx >= dcnow_data.game_count) break;
+
+                    char game_buf[128];
+                    const char* status = dcnow_data.games[game_idx].is_active ? "" : " (offline)";
+
+                    if (dcnow_data.games[game_idx].player_count == 1) {
                         snprintf(game_buf, sizeof(game_buf), "%s - %d player%s",
-                                 dcnow_data.games[i].game_name,
-                                 dcnow_data.games[i].player_count,
+                                 dcnow_data.games[game_idx].game_name,
+                                 dcnow_data.games[game_idx].player_count,
                                  status);
                     } else {
                         snprintf(game_buf, sizeof(game_buf), "%s - %d players%s",
-                                 dcnow_data.games[i].game_name,
-                                 dcnow_data.games[i].player_count,
+                                 dcnow_data.games[game_idx].game_name,
+                                 dcnow_data.games[game_idx].player_count,
                                  status);
                     }
 
-                    font_bmp_set_color(i == dcnow_choice ? highlight_color : text_color);
+                    font_bmp_set_color(game_idx == dcnow_choice ? highlight_color : text_color);
                     font_bmp_draw_main(x_item, cur_y, game_buf);
+                    cur_y += line_height;
+                }
+
+                /* Show scroll indicators if needed */
+                if (dcnow_data.game_count > max_visible_games) {
+                    char scroll_info[32];
+                    snprintf(scroll_info, sizeof(scroll_info), "(%d/%d)",
+                             dcnow_choice + 1, dcnow_data.game_count);
+                    font_bmp_set_color(text_color);
+                    font_bmp_draw_main(x_item, cur_y, scroll_info);
                     cur_y += line_height;
                 }
             }
@@ -2073,13 +2104,13 @@ draw_dcnow_tr(void) {
                 font_bmp_draw_main(x_item, cur_y, "Press A to retry");
             }
             cur_y += line_height;
-            font_bmp_draw_main(x_item, cur_y, "Press B to close");
-            cur_y += line_height;
         }
 
-        /* Close button */
-        font_bmp_set_color(dcnow_choice == dcnow_data.game_count ? highlight_color : text_color);
-        font_bmp_draw_main(x_item, cur_y, "Close");
+        /* Instructions */
+        cur_y += line_height / 2;  /* Add a small gap before instructions */
+        font_bmp_set_color(text_color);
+        font_bmp_draw_main(x_item, cur_y, "Push A to Refresh  |  Push B to Close");
+        cur_y += line_height;
 
     } else {
         /* LineDesc/Grid modes - use vector font */
@@ -2094,9 +2125,9 @@ draw_dcnow_tr(void) {
         int num_lines = 2;  /* Title + total */
         if (dcnow_data.data_valid) {
             num_lines += (dcnow_data.game_count < max_visible_games ? dcnow_data.game_count : max_visible_games);
-            num_lines++;  /* Close */
+            num_lines += 2;  /* Instructions (A to Refresh, B to Close) */
         } else {
-            num_lines += 2;  /* Error + retry hint */
+            num_lines += 2;  /* Error + instructions */
         }
 
         const int width = max_line_len + padding;
@@ -2130,25 +2161,41 @@ draw_dcnow_tr(void) {
                 cur_y += line_height;
                 font_bmf_draw(x_item, cur_y, text_color, "No active games");
             } else {
-                for (int i = 0; i < dcnow_data.game_count && i < max_visible_games; i++) {
+                /* Show games with scrolling support */
+                int visible_count = (dcnow_data.game_count < max_visible_games) ?
+                                   dcnow_data.game_count : max_visible_games;
+
+                for (int i = 0; i < visible_count; i++) {
+                    int game_idx = dcnow_scroll_offset + i;
+                    if (game_idx >= dcnow_data.game_count) break;
+
                     cur_y += line_height;
                     char game_buf[128];
-                    const char* status = dcnow_data.games[i].is_active ? "" : " (offline)";
+                    const char* status = dcnow_data.games[game_idx].is_active ? "" : " (offline)";
 
-                    if (dcnow_data.games[i].player_count == 1) {
+                    if (dcnow_data.games[game_idx].player_count == 1) {
                         snprintf(game_buf, sizeof(game_buf), "%s - %d player%s",
-                                 dcnow_data.games[i].game_name,
-                                 dcnow_data.games[i].player_count,
+                                 dcnow_data.games[game_idx].game_name,
+                                 dcnow_data.games[game_idx].player_count,
                                  status);
                     } else {
                         snprintf(game_buf, sizeof(game_buf), "%s - %d players%s",
-                                 dcnow_data.games[i].game_name,
-                                 dcnow_data.games[i].player_count,
+                                 dcnow_data.games[game_idx].game_name,
+                                 dcnow_data.games[game_idx].player_count,
                                  status);
                     }
 
-                    uint32_t color = (i == dcnow_choice) ? highlight_color : text_color;
+                    uint32_t color = (game_idx == dcnow_choice) ? highlight_color : text_color;
                     font_bmf_draw_auto_size(x_item, cur_y, color, game_buf, width - 20);
+                }
+
+                /* Show scroll indicators if needed */
+                if (dcnow_data.game_count > max_visible_games) {
+                    cur_y += line_height;
+                    char scroll_info[32];
+                    snprintf(scroll_info, sizeof(scroll_info), "(%d/%d)",
+                             dcnow_choice + 1, dcnow_data.game_count);
+                    font_bmf_draw(x_item, cur_y, text_color, scroll_info);
                 }
             }
         } else {
@@ -2162,12 +2209,11 @@ draw_dcnow_tr(void) {
                 font_bmf_draw(x_item, cur_y, text_color, "Press A to retry");
             }
             cur_y += line_height;
-            font_bmf_draw(x_item, cur_y, text_color, "Press B to close");
         }
 
-        /* Close */
+        /* Instructions */
+        cur_y += line_height / 2;  /* Add a small gap before instructions */
+        font_bmf_draw(x_item, cur_y, text_color, "Push A to Refresh  |  Push B to Close");
         cur_y += line_height;
-        uint32_t close_color = (dcnow_choice == dcnow_data.game_count) ? highlight_color : text_color;
-        font_bmf_draw(x_item, cur_y, close_color, "Close");
     }
 }
