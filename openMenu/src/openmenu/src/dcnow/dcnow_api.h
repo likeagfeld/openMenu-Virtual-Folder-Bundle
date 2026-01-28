@@ -13,6 +13,12 @@
 /* Maximum length for game codes (e.g., "PSO", "BROWSERS") */
 #define MAX_GAME_CODE_LEN 16
 
+/* Maximum number of players per game to track */
+#define MAX_PLAYERS_PER_GAME 16
+
+/* Maximum length for player usernames */
+#define MAX_USERNAME_LEN 32
+
 /**
  * Structure representing a single game's active player data
  */
@@ -21,6 +27,7 @@ typedef struct {
     char game_code[MAX_GAME_CODE_LEN];   /* Short code for texture lookup (e.g., "PSO") */
     int player_count;
     bool is_active;
+    char player_names[MAX_PLAYERS_PER_GAME][MAX_USERNAME_LEN];  /* List of usernames */
 } dcnow_game_info_t;
 
 /**

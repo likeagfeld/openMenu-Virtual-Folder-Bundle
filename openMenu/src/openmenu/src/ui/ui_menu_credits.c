@@ -1853,9 +1853,16 @@ static const char* get_product_id_from_api_code(const char* api_code) {
     return api_code;
 }
 
+typedef enum {
+    DCNOW_VIEW_GAMES,    /* Showing list of games */
+    DCNOW_VIEW_PLAYERS   /* Showing list of players for selected game */
+} dcnow_view_t;
+
 static dcnow_data_t dcnow_data;
+static dcnow_view_t dcnow_view = DCNOW_VIEW_GAMES;
 static int dcnow_choice = 0;
 static int dcnow_scroll_offset = 0;  /* Scroll offset for viewing large game lists */
+static int dcnow_selected_game = -1; /* Index of selected game for player view */
 static bool dcnow_data_fetched = false;
 static bool dcnow_is_loading = false;
 static bool dcnow_needs_fetch = false;  /* Flag to trigger fetch on next frame */
@@ -1908,6 +1915,8 @@ dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_pt
     popup_setup(state, _colors, timeout_ptr, title_color);
     dcnow_choice = 0;
     dcnow_scroll_offset = 0;
+    dcnow_view = DCNOW_VIEW_GAMES;
+    dcnow_selected_game = -1;
 
     /* Set the draw state to DRAW_DCNOW_PLAYERS to actually show the DC Now menu */
     *state = DRAW_DCNOW_PLAYERS;
@@ -1976,16 +1985,12 @@ void
 handle_input_dcnow(enum control input) {
     switch (input) {
         case A: {
-            /* A button: Connect or Refresh */
+            /* A button: Connect / Fetch data / Drill down into game */
             if (!dcnow_net_initialized) {
-                /* Connect to DreamPi - SET CALLBACK FOR VISUAL FEEDBACK */
+                /* Connect to DreamPi */
                 printf("DC Now: Starting connection...\n");
                 dcnow_set_status_callback(dcnow_connection_status_callback);
-
-                /* Initialize network/modem - this will show status messages via callback */
                 int net_result = dcnow_net_early_init();
-
-                /* Clear callback after connection attempt */
                 dcnow_set_status_callback(NULL);
 
                 if (net_result < 0) {
@@ -1994,40 +1999,64 @@ handle_input_dcnow(enum control input) {
                     snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
                             "Connection failed (error %d)", net_result);
                     dcnow_data.data_valid = false;
-                    dcnow_net_initialized = true;  /* Mark as attempted */
+                    dcnow_net_initialized = true;
                 } else {
                     printf("DC Now: Connection successful\n");
-                    /* Don't fetch data immediately - let user press A again */
-                    /* This gives socket layer time to be ready */
                     dcnow_net_initialized = true;
                     memset(&dcnow_data, 0, sizeof(dcnow_data));
                     snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
-                            "Connected! Press A to fetch data");
+                            "Connected! Press X to fetch data");
                     dcnow_data.data_valid = false;
                 }
-            } else {
-                /* Already connected - trigger refresh on next frame */
+            } else if (!dcnow_data.data_valid) {
+                /* Fetch initial data */
+                printf("DC Now: Requesting initial fetch...\n");
+                dcnow_data_fetched = false;
+                dcnow_is_loading = true;
+                dcnow_needs_fetch = true;
+                dcnow_choice = 0;
+                dcnow_scroll_offset = 0;
+            } else if (dcnow_view == DCNOW_VIEW_GAMES && dcnow_choice < dcnow_data.game_count) {
+                /* Drill down into selected game to show players */
+                dcnow_selected_game = dcnow_choice;
+                dcnow_view = DCNOW_VIEW_PLAYERS;
+                dcnow_choice = 0;
+                dcnow_scroll_offset = 0;
+                printf("DC Now: Viewing players for game %d\n", dcnow_selected_game);
+            }
+        } break;
+        case X: {
+            /* X button: Refresh data */
+            if (dcnow_net_initialized && dcnow_data.data_valid) {
                 printf("DC Now: Requesting refresh...\n");
-
-                /* Clear old data and show loading state */
                 dcnow_data_fetched = false;
                 dcnow_data.data_valid = false;
                 dcnow_is_loading = true;
                 dcnow_needs_fetch = true;
+                dcnow_view = DCNOW_VIEW_GAMES;
                 dcnow_choice = 0;
                 dcnow_scroll_offset = 0;
             }
         } break;
         case B: {
-            /* B button: Close DC Now menu */
-            *state_ptr = DRAW_UI;
+            /* B button: Back or Close */
+            if (dcnow_view == DCNOW_VIEW_PLAYERS) {
+                /* Go back to game list */
+                dcnow_view = DCNOW_VIEW_GAMES;
+                dcnow_choice = dcnow_selected_game;
+                dcnow_scroll_offset = 0;
+                dcnow_selected_game = -1;
+            } else {
+                /* Close DC Now menu */
+                *state_ptr = DRAW_UI;
+            }
         } break;
         case START: {
             /* START button: Do nothing (let it close the menu naturally) */
         } break;
         case UP: {
-            /* Scroll up through game list */
-            if (dcnow_data.data_valid && dcnow_choice > 0) {
+            /* Scroll up */
+            if (dcnow_choice > 0) {
                 dcnow_choice--;
                 /* Adjust scroll offset if selection goes above visible area */
                 if (dcnow_choice < dcnow_scroll_offset) {
@@ -2036,11 +2065,17 @@ handle_input_dcnow(enum control input) {
             }
         } break;
         case DOWN: {
-            /* Scroll down through game list */
-            if (dcnow_data.data_valid && dcnow_choice < dcnow_data.game_count - 1) {
+            /* Scroll down */
+            int max_items = 0;
+            if (dcnow_view == DCNOW_VIEW_GAMES) {
+                max_items = dcnow_data.data_valid ? dcnow_data.game_count - 1 : 0;
+            } else if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0) {
+                max_items = dcnow_data.games[dcnow_selected_game].player_count - 1;
+            }
+
+            if (dcnow_choice < max_items) {
                 dcnow_choice++;
                 /* Adjust scroll offset if selection goes below visible area */
-                /* max_visible_games is 10 for bitmap font, 8 for vector font */
                 int max_visible = (sf_ui[0] == UI_SCROLL || sf_ui[0] == UI_FOLDERS) ? 10 : 8;
                 if (dcnow_choice >= dcnow_scroll_offset + max_visible) {
                     dcnow_scroll_offset = dcnow_choice - max_visible + 1;

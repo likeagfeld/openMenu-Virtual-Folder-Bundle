@@ -145,6 +145,13 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
         users_val++;  /* Skip opening brace */
         user_count++;
 
+        /* Find username field */
+        const char* username_val = find_key(users_val, "username");
+        char username[JSON_MAX_USERNAME_LEN] = "";
+        if (username_val && *username_val == '"') {
+            parse_string(username_val, username, JSON_MAX_USERNAME_LEN);
+        }
+
         /* Find current_game_display field (full name) */
         const char* game_display_val = find_key(users_val, "current_game_display");
         /* Find current_game field (short code) */
@@ -177,7 +184,12 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
                 }
 
                 if (found_idx >= 0) {
-                    /* Increment existing game count */
+                    /* Increment existing game count and add username */
+                    int player_idx = result->games[found_idx].players;
+                    if (player_idx < JSON_MAX_PLAYERS_PER_GAME && username[0] != '\0') {
+                        strncpy(result->games[found_idx].player_names[player_idx], username, JSON_MAX_USERNAME_LEN - 1);
+                        result->games[found_idx].player_names[player_idx][JSON_MAX_USERNAME_LEN - 1] = '\0';
+                    }
                     result->games[found_idx].players++;
                 } else if (result->game_count < JSON_MAX_GAMES) {
                     /* Add new game */
@@ -186,6 +198,11 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
                     strncpy(result->games[result->game_count].code, game_code, JSON_MAX_CODE_LEN - 1);
                     result->games[result->game_count].code[JSON_MAX_CODE_LEN - 1] = '\0';
                     result->games[result->game_count].players = 1;
+                    /* Add first username */
+                    if (username[0] != '\0') {
+                        strncpy(result->games[result->game_count].player_names[0], username, JSON_MAX_USERNAME_LEN - 1);
+                        result->games[result->game_count].player_names[0][JSON_MAX_USERNAME_LEN - 1] = '\0';
+                    }
                     result->game_count++;
                 }
             }

@@ -410,6 +410,13 @@ int dcnow_fetch_data(dcnow_data_t *data, uint32_t timeout_ms) {
         data->games[i].game_code[MAX_GAME_CODE_LEN - 1] = '\0';
         data->games[i].player_count = json_result.games[i].players;
         data->games[i].is_active = (json_result.games[i].players > 0);
+
+        /* Copy player names */
+        for (int j = 0; j < json_result.games[i].players && j < MAX_PLAYERS_PER_GAME; j++) {
+            strncpy(data->games[i].player_names[j], json_result.games[i].player_names[j], MAX_USERNAME_LEN - 1);
+            data->games[i].player_names[j][MAX_USERNAME_LEN - 1] = '\0';
+        }
+
         printf("DC Now:   %s (%s) - %d players\n",
                data->games[i].game_name, data->games[i].game_code, data->games[i].player_count);
     }
