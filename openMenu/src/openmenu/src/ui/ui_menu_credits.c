@@ -1773,7 +1773,12 @@ draw_psx_launcher_tr(void) {
  */
 #include "../dcnow/dcnow_api.h"
 #include "../dcnow/dcnow_net_init.h"
+#include "../dcnow/dcnow_flash_isp.h"
 #include "../texture/txr_manager.h"
+
+#ifdef _arch_dreamcast
+#include <kos/net.h>
+#endif
 
 extern image img_empty_boxart;  /* Defined in draw_kos.c */
 
@@ -1854,12 +1859,13 @@ static const char* get_product_id_from_api_code(const char* api_code) {
 }
 
 typedef enum {
-    DCNOW_VIEW_GAMES,    /* Showing list of games */
-    DCNOW_VIEW_PLAYERS   /* Showing list of players for selected game */
+    DCNOW_VIEW_ISP_SELECT,  /* Selecting ISP configuration */
+    DCNOW_VIEW_GAMES,       /* Showing list of games */
+    DCNOW_VIEW_PLAYERS      /* Showing list of players for selected game */
 } dcnow_view_t;
 
 static dcnow_data_t dcnow_data;
-static dcnow_view_t dcnow_view = DCNOW_VIEW_GAMES;
+static dcnow_view_t dcnow_view = DCNOW_VIEW_ISP_SELECT;  /* Start with ISP selection */
 static int dcnow_choice = 0;
 static int dcnow_scroll_offset = 0;  /* Scroll offset for viewing large game lists */
 static int dcnow_selected_game = -1; /* Index of selected game for player view */
@@ -1868,7 +1874,10 @@ static bool dcnow_is_loading = false;
 static bool dcnow_needs_fetch = false;  /* Flag to trigger fetch on next frame */
 static bool dcnow_shown_loading = false;  /* Track if we've displayed loading screen */
 static bool dcnow_net_initialized = false;
-static char connection_status[128] = "";
+
+/* ISP configuration state */
+static isp_config_t isp_configs[MAX_ISP_CONFIGS];
+static int isp_count = 0;
 
 /* Visual callback for network connection status - renders full scene */
 static void dcnow_connection_status_callback(const char* message) {
@@ -1916,100 +1925,75 @@ dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_pt
     popup_setup(state, _colors, timeout_ptr, title_color);
     dcnow_choice = 0;
     dcnow_scroll_offset = 0;
-    dcnow_view = DCNOW_VIEW_GAMES;
     dcnow_selected_game = -1;
+
+    printf("DC Now: dcnow_setup() called\n");
 
     /* Set the draw state to DRAW_DCNOW_PLAYERS to actually show the DC Now menu */
     *state = DRAW_DCNOW_PLAYERS;
 
-    /* Network initialization is now done via menu option, not automatically */
-    /* User can select "Connect to DreamPi" from the DC Now menu */
+    /* Start with games view */
+    dcnow_view = DCNOW_VIEW_GAMES;
 
-    /* If network is already initialized and we haven't fetched data yet, try to fetch */
-    if (dcnow_net_initialized && !dcnow_data_fetched && !dcnow_is_loading) {
-        dcnow_is_loading = true;
+    memset(&dcnow_data, 0, sizeof(dcnow_data));
 
-        /* Attempt to fetch fresh data from dreamcast.online/now */
-        int result = dcnow_fetch_data(&dcnow_data, 5000);  /* 5 second timeout */
+#ifdef _arch_dreamcast
+    /* ALWAYS dial the modem - use ISP slot 1 from flash */
+    printf("DC Now: Attempting modem dial...\n");
 
-        if (result == 0) {
-            dcnow_data_fetched = true;
+    /* Load ISP slot 1 from flash */
+    isp_count = dcnow_flash_read_isps(isp_configs, MAX_ISP_CONFIGS);
+
+    if (isp_count > 0 && isp_configs[0].valid) {
+        /* Use ISP slot 1 from flash */
+        isp_config_t* dial_isp = &isp_configs[0];
+        printf("DC Now: Using ISP slot 1 from flash: '%s'\n", dial_isp->name);
+        printf("DC Now: Phone: %s, User: %s\n", dial_isp->phone, dial_isp->username);
+
+        /* Dial the modem */
+        dcnow_set_status_callback(dcnow_connection_status_callback);
+        int net_result = dcnow_net_init_with_isp(dial_isp);
+        dcnow_set_status_callback(NULL);
+
+        if (net_result < 0) {
+            printf("DC Now: Connection failed: %d\n", net_result);
+            snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
+                    "Dial failed (error %d)", net_result);
+            dcnow_data.data_valid = false;
+            dcnow_net_initialized = false;
         } else {
-            /* Failed to fetch - try to use cached data */
-            if (!dcnow_get_cached_data(&dcnow_data)) {
-                /* No cached data available, show error */
-                memset(&dcnow_data, 0, sizeof(dcnow_data));
-                strcpy(dcnow_data.error_message, "Not connected - select Connect to begin");
-                dcnow_data.data_valid = false;
-            }
+            printf("DC Now: Connected!\n");
+            dcnow_net_initialized = true;
+
+            /* Auto-fetch data */
+            printf("DC Now: Auto-fetching data...\n");
+            dcnow_is_loading = true;
+            dcnow_needs_fetch = true;
+            dcnow_shown_loading = false;
         }
-
-        dcnow_is_loading = false;
-    } else if (!dcnow_net_initialized) {
-        /* Show message prompting user to connect */
-        memset(&dcnow_data, 0, sizeof(dcnow_data));
-        strcpy(dcnow_data.error_message, "Not connected");
+    } else {
+        /* No valid ISP in slot 1 - show error */
+        printf("DC Now: ERROR - No valid ISP in slot 1!\n");
+        strcpy(dcnow_data.error_message, "No ISP in slot 1! Configure in DC browser.");
         dcnow_data.data_valid = false;
+        dcnow_net_initialized = false;
     }
-}
+#else
+    /* Non-Dreamcast - show error */
+    strcpy(dcnow_data.error_message, "Not running on Dreamcast");
+    dcnow_data.data_valid = false;
+    dcnow_net_initialized = false;
+#endif
 
-/* Helper to render a connection status frame before blocking operation */
-static void render_connection_frame(const char* message) {
-    pvr_wait_ready();
-    pvr_scene_begin();
-
-    draw_set_list(PVR_LIST_OP_POLY);
-    pvr_list_begin(PVR_LIST_OP_POLY);
-    pvr_list_finish();
-
-    draw_set_list(PVR_LIST_TR_POLY);
-    pvr_list_begin(PVR_LIST_TR_POLY);
-
-    /* White border */
-    const int border_width = 2;
-    draw_draw_quad(160 - border_width, 200 - border_width,
-                   320 + (2 * border_width), 80 + (2 * border_width),
-                   0xFFFFFFFF);
-
-    /* Black background */
-    draw_draw_quad(160, 200, 320, 80, 0xFF000000);
-
-    /* Message */
-    font_bmf_begin_draw();
-    font_bmf_draw_centered(320, 230, 0xFFFFFFFF, message);
-
-    pvr_list_finish();
-    pvr_scene_finish();
+    printf("DC Now: dcnow_setup() complete\n");
 }
 
 void
 handle_input_dcnow(enum control input) {
     switch (input) {
         case A: {
-            /* A button: Connect / Fetch data / Drill down into game */
-            if (!dcnow_net_initialized) {
-                /* Connect to DreamPi */
-                printf("DC Now: Starting connection...\n");
-                dcnow_set_status_callback(dcnow_connection_status_callback);
-                int net_result = dcnow_net_early_init();
-                dcnow_set_status_callback(NULL);
-
-                if (net_result < 0) {
-                    printf("DC Now: Connection failed: %d\n", net_result);
-                    memset(&dcnow_data, 0, sizeof(dcnow_data));
-                    snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
-                            "Connection failed (error %d)", net_result);
-                    dcnow_data.data_valid = false;
-                    dcnow_net_initialized = true;
-                } else {
-                    printf("DC Now: Connection successful\n");
-                    dcnow_net_initialized = true;
-                    memset(&dcnow_data, 0, sizeof(dcnow_data));
-                    snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
-                            "Connected! Press X to fetch data");
-                    dcnow_data.data_valid = false;
-                }
-            } else if (!dcnow_data.data_valid) {
+            /* A button: Fetch data / Drill down into game */
+            if (!dcnow_data.data_valid && dcnow_net_initialized) {
                 /* Fetch initial data */
                 printf("DC Now: Requesting initial fetch...\n");
                 dcnow_data_fetched = false;
@@ -2046,7 +2030,7 @@ handle_input_dcnow(enum control input) {
         } break;
         case B: {
             /* B button: Back or Close */
-            printf("DC Now: B pressed, view=%d (0=GAMES, 1=PLAYERS)\n", dcnow_view);
+            printf("DC Now: B pressed, view=%d (1=GAMES, 2=PLAYERS)\n", dcnow_view);
             if (dcnow_view == DCNOW_VIEW_PLAYERS) {
                 /* Go back to game list */
                 printf("DC Now: Going back to game list\n");
@@ -2059,10 +2043,9 @@ handle_input_dcnow(enum control input) {
                 }
                 dcnow_scroll_offset = 0;
                 dcnow_selected_game = -1;
-                /* DO NOT close the menu - just return to games view */
-                return;  /* Early return to prevent any further processing */
+                return;  /* Early return */
             }
-            /* If we reach here, we're in games view, so close the menu */
+            /* Close the menu */
             printf("DC Now: Closing DC Now menu\n");
             *state_ptr = DRAW_UI;
         } break;
@@ -2178,7 +2161,7 @@ draw_dcnow_tr(void) {
         font_bmp_begin_draw();
         font_bmp_set_color(menu_title_color);
 
-        /* Title with debug view indicator */
+        /* Title with view indicator */
         char title[64];
         if (dcnow_view == DCNOW_VIEW_PLAYERS) {
             snprintf(title, sizeof(title), "Dreamcast Live - Player List");
@@ -2328,11 +2311,11 @@ draw_dcnow_tr(void) {
         cur_y += line_height / 2;  /* Add a small gap before instructions */
         font_bmp_set_color(text_color);
         if (dcnow_view == DCNOW_VIEW_PLAYERS) {
-            font_bmp_draw_main(x_item, cur_y, "Push B to go Back  |  Push X to Refresh");
+            font_bmp_draw_main(x_item, cur_y, "B=Back  X=Refresh");
         } else if (!dcnow_net_initialized) {
-            font_bmp_draw_main(x_item, cur_y, "Push A to Connect  |  Push B to Close");
+            font_bmp_draw_main(x_item, cur_y, "B=Close");
         } else if (!dcnow_data.data_valid) {
-            font_bmp_draw_main(x_item, cur_y, "Push A to Fetch  |  Push B to Close");
+            font_bmp_draw_main(x_item, cur_y, "A=Fetch  B=Close  X=Refresh");
         } else {
             font_bmp_draw_main(x_item, cur_y, "A=Details  X=Refresh  B=Close");
         }
@@ -2386,7 +2369,7 @@ draw_dcnow_tr(void) {
         font_bmf_begin_draw();
         font_bmf_set_height_default();
 
-        /* Title with debug view indicator */
+        /* Title with view indicator */
         if (dcnow_view == DCNOW_VIEW_PLAYERS) {
             font_bmf_draw_centered(x + width / 2, cur_y, text_color, "Dreamcast Live - Player List");
         } else {
@@ -2518,11 +2501,11 @@ draw_dcnow_tr(void) {
         /* Instructions */
         cur_y += line_height / 2;  /* Add a small gap before instructions */
         if (dcnow_view == DCNOW_VIEW_PLAYERS) {
-            font_bmf_draw(x_item, cur_y, text_color, "Push B to go Back  |  Push X to Refresh");
+            font_bmf_draw(x_item, cur_y, text_color, "B=Back  X=Refresh");
         } else if (!dcnow_net_initialized) {
-            font_bmf_draw(x_item, cur_y, text_color, "Push A to Connect  |  Push B to Close");
+            font_bmf_draw(x_item, cur_y, text_color, "B=Close");
         } else if (!dcnow_data.data_valid) {
-            font_bmf_draw(x_item, cur_y, text_color, "Push A to Fetch  |  Push B to Close");
+            font_bmf_draw(x_item, cur_y, text_color, "A=Fetch  B=Close  X=Refresh");
         } else {
             font_bmf_draw(x_item, cur_y, text_color, "A=Details  X=Refresh  B=Close");
         }
