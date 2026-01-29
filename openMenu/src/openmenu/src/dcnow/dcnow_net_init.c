@@ -68,6 +68,11 @@ int dcnow_net_early_init(void) {
         return -1;
     }
 
+    /* Force 14400 baud for faster connection */
+    /* MODEM_MODE_REMOTE = 0, MODEM_SPEED_V8_14400 = 0x86 */
+    update_status("Setting modem speed to 14400...");
+    modem_set_mode(0 /* MODEM_MODE_REMOTE */, 0x86 /* MODEM_SPEED_V8_14400 */);
+
     /* Initialize PPP subsystem */
     if (ppp_init() < 0) {
         update_status("PPP init failed!");
