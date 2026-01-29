@@ -2077,24 +2077,34 @@ handle_input_dcnow(enum control input) {
                 if (dcnow_choice < dcnow_scroll_offset) {
                     dcnow_scroll_offset = dcnow_choice;
                 }
+                printf("DC Now: UP - choice=%d, scroll_offset=%d\n", dcnow_choice, dcnow_scroll_offset);
             }
         } break;
         case DOWN: {
             /* Scroll down */
             int max_items = 0;
-            if (dcnow_view == DCNOW_VIEW_GAMES) {
-                max_items = dcnow_data.data_valid ? dcnow_data.game_count - 1 : 0;
+            int total_items = 0;
+            if (dcnow_view == DCNOW_VIEW_GAMES && dcnow_data.data_valid) {
+                total_items = dcnow_data.game_count;
+                max_items = total_items - 1;
             } else if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0) {
-                max_items = dcnow_data.games[dcnow_selected_game].player_count - 1;
+                total_items = dcnow_data.games[dcnow_selected_game].player_count;
+                max_items = total_items - 1;
             }
 
-            if (dcnow_choice < max_items) {
+            if (total_items > 0 && dcnow_choice < max_items) {
                 dcnow_choice++;
                 /* Adjust scroll offset if selection goes below visible area */
                 int max_visible = (sf_ui[0] == UI_SCROLL || sf_ui[0] == UI_FOLDERS) ? 10 : 8;
                 if (dcnow_choice >= dcnow_scroll_offset + max_visible) {
                     dcnow_scroll_offset = dcnow_choice - max_visible + 1;
                 }
+                /* Ensure scroll offset doesn't go negative */
+                if (dcnow_scroll_offset < 0) {
+                    dcnow_scroll_offset = 0;
+                }
+                printf("DC Now: DOWN - choice=%d, scroll_offset=%d, max_items=%d\n",
+                       dcnow_choice, dcnow_scroll_offset, max_items);
             }
         } break;
         default:
@@ -2167,7 +2177,7 @@ draw_dcnow_tr(void) {
             num_lines += 2;  /* Error message + instructions */
         }
 
-        const int height = num_lines * line_height + title_gap;
+        const int height = (int)((num_lines * line_height + title_gap) * 1.5);
         const int x = (640 / 2) - (width / 2);
         const int y = (480 / 2) - (height / 2);
         const int x_item = x + (padding / 2);
@@ -2328,7 +2338,7 @@ draw_dcnow_tr(void) {
         cur_y += line_height / 2;  /* Add a small gap before instructions */
         font_bmp_set_color(text_color);
         if (dcnow_view == DCNOW_VIEW_PLAYERS) {
-            font_bmp_draw_main(x_item, cur_y, "Push B to go Back  |  Push X to Refresh");
+            font_bmp_draw_main(x_item, cur_y, "X=Back to Home  |  B=Close Menu");
         } else if (!dcnow_net_initialized) {
             font_bmp_draw_main(x_item, cur_y, "Push A to Connect  |  Push B to Close");
         } else if (!dcnow_data.data_valid) {
@@ -2375,7 +2385,7 @@ draw_dcnow_tr(void) {
         }
 
         const int width = (max_line_len * 10) + padding + icon_space;
-        const int height = num_lines * line_height + title_gap;
+        const int height = (int)((num_lines * line_height + title_gap) * 1.5);
         const int x = (640 / 2) - (width / 2);
         const int y = (480 / 2) - (height / 2);
         const int x_item = x + 10;
@@ -2518,7 +2528,7 @@ draw_dcnow_tr(void) {
         /* Instructions */
         cur_y += line_height / 2;  /* Add a small gap before instructions */
         if (dcnow_view == DCNOW_VIEW_PLAYERS) {
-            font_bmf_draw(x_item, cur_y, text_color, "Push B to go Back  |  Push X to Refresh");
+            font_bmf_draw(x_item, cur_y, text_color, "X=Back to Home  |  B=Close Menu");
         } else if (!dcnow_net_initialized) {
             font_bmf_draw(x_item, cur_y, text_color, "Push A to Connect  |  Push B to Close");
         } else if (!dcnow_data.data_valid) {
