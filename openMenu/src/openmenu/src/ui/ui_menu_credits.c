@@ -2058,9 +2058,10 @@ handle_input_dcnow(enum control input) {
                     printf("DC Now: Connection failed: %d\n", net_result);
                     memset(&dcnow_data, 0, sizeof(dcnow_data));
                     snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
-                            "Connection failed (error %d)", net_result);
+                            "Connection failed (error %d). Press A to retry", net_result);
                     dcnow_data.data_valid = false;
-                    dcnow_net_initialized = true;
+                    /* Don't set dcnow_net_initialized = true on failure! */
+                    /* User needs to be able to retry connection */
                 } else {
                     printf("DC Now: Connection successful\n");
                     dcnow_net_initialized = true;
