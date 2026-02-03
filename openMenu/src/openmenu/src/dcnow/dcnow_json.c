@@ -136,8 +136,9 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
     int users_with_games = 0;
     int users_without_games = 0;
 
-    /* Array to store idle player usernames */
+    /* Array to store idle player usernames and details */
     char idle_player_names[JSON_MAX_PLAYERS_PER_GAME][JSON_MAX_USERNAME_LEN];
+    json_player_details_t idle_player_details[JSON_MAX_PLAYERS_PER_GAME];
     int idle_player_count = 0;
 
     while (*users_val && *users_val != ']') {
@@ -154,6 +155,22 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
         char username[JSON_MAX_USERNAME_LEN] = "";
         if (username_val && *username_val == '"') {
             parse_string(username_val, username, JSON_MAX_USERNAME_LEN);
+        }
+
+        /* Parse minimal player details (level and country only) */
+        json_player_details_t player_details;
+        memset(&player_details, 0, sizeof(player_details));
+
+        /* Level */
+        const char* level_val = find_key(users_val, "level");
+        if (level_val && *level_val == '"') {
+            parse_string(level_val, player_details.level, JSON_MAX_LEVEL_LEN);
+        }
+
+        /* Country */
+        const char* country_val = find_key(users_val, "country");
+        if (country_val && *country_val == '"') {
+            parse_string(country_val, player_details.country, sizeof(player_details.country));
         }
 
         /* Find current_game_display field (full name) */
@@ -188,11 +205,12 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
                 }
 
                 if (found_idx >= 0) {
-                    /* Increment existing game count and add username */
+                    /* Increment existing game count and add username + details */
                     int player_idx = result->games[found_idx].players;
                     if (player_idx < JSON_MAX_PLAYERS_PER_GAME && username[0] != '\0') {
                         strncpy(result->games[found_idx].player_names[player_idx], username, JSON_MAX_USERNAME_LEN - 1);
                         result->games[found_idx].player_names[player_idx][JSON_MAX_USERNAME_LEN - 1] = '\0';
+                        memcpy(&result->games[found_idx].player_details[player_idx], &player_details, sizeof(player_details));
                     }
                     result->games[found_idx].players++;
                 } else if (result->game_count < JSON_MAX_GAMES) {
@@ -202,10 +220,11 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
                     strncpy(result->games[result->game_count].code, game_code, JSON_MAX_CODE_LEN - 1);
                     result->games[result->game_count].code[JSON_MAX_CODE_LEN - 1] = '\0';
                     result->games[result->game_count].players = 1;
-                    /* Add first username */
+                    /* Add first username and details */
                     if (username[0] != '\0') {
                         strncpy(result->games[result->game_count].player_names[0], username, JSON_MAX_USERNAME_LEN - 1);
                         result->games[result->game_count].player_names[0][JSON_MAX_USERNAME_LEN - 1] = '\0';
+                        memcpy(&result->games[result->game_count].player_details[0], &player_details, sizeof(player_details));
                     }
                     result->game_count++;
                 }
@@ -213,11 +232,12 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
         }
 
         if (!has_game) {
-            /* User is idle/not in a game - store their username */
+            /* User is idle/not in a game - store their username and details */
             users_without_games++;
             if (idle_player_count < JSON_MAX_PLAYERS_PER_GAME && username[0] != '\0') {
                 strncpy(idle_player_names[idle_player_count], username, JSON_MAX_USERNAME_LEN - 1);
                 idle_player_names[idle_player_count][JSON_MAX_USERNAME_LEN - 1] = '\0';
+                memcpy(&idle_player_details[idle_player_count], &player_details, sizeof(player_details));
                 idle_player_count++;
             }
             printf("DC Now: User %d (%s) is idle/not in game\n", user_count, username);
@@ -249,10 +269,11 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
         result->games[result->game_count].code[0] = '\0';  /* No box art for idle users */
         result->games[result->game_count].players = users_without_games;
 
-        /* Copy idle player usernames */
+        /* Copy idle player usernames and details */
         for (int i = 0; i < idle_player_count && i < JSON_MAX_PLAYERS_PER_GAME; i++) {
             strncpy(result->games[result->game_count].player_names[i], idle_player_names[i], JSON_MAX_USERNAME_LEN - 1);
             result->games[result->game_count].player_names[i][JSON_MAX_USERNAME_LEN - 1] = '\0';
+            memcpy(&result->games[result->game_count].player_details[i], &idle_player_details[i], sizeof(json_player_details_t));
         }
 
         result->game_count++;

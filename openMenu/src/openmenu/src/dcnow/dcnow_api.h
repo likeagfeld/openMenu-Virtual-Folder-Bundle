@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "dcnow_json.h"
 
 /* Maximum number of games that can be displayed */
 #define MAX_DCNOW_GAMES 32
@@ -28,6 +29,7 @@ typedef struct {
     int player_count;
     bool is_active;
     char player_names[MAX_PLAYERS_PER_GAME][MAX_USERNAME_LEN];  /* List of usernames */
+    json_player_details_t player_details[MAX_PLAYERS_PER_GAME];  /* Level and country per player */
 } dcnow_game_info_t;
 
 /**

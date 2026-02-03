@@ -2336,6 +2336,25 @@ draw_dcnow_tr(void) {
 
                     font_bmp_set_color(player_idx == dcnow_choice ? 0xFFFF8800 : text_color);  /* Bright orange for selection */
                     font_bmp_draw_main(x_item, cur_y, dcnow_data.games[dcnow_selected_game].player_names[player_idx]);
+
+                    /* Show level and country for highlighted player */
+                    if (player_idx == dcnow_choice) {
+                        const json_player_details_t *details = &dcnow_data.games[dcnow_selected_game].player_details[player_idx];
+                        if (details->level[0] != '\0' || details->country[0] != '\0') {
+                            char info[64];
+                            if (details->level[0] != '\0' && details->country[0] != '\0') {
+                                snprintf(info, sizeof(info), " [%s | %s]", details->level, details->country);
+                            } else if (details->level[0] != '\0') {
+                                snprintf(info, sizeof(info), " [%s]", details->level);
+                            } else {
+                                snprintf(info, sizeof(info), " [%s]", details->country);
+                            }
+                            int name_width = strlen(dcnow_data.games[dcnow_selected_game].player_names[player_idx]) * 8;
+                            font_bmp_set_color(0xFF88CCFF);  /* Light blue for details */
+                            font_bmp_draw_main(x_item + name_width, cur_y, info);
+                        }
+                    }
+
                     cur_y += line_height;
                 }
 
@@ -2646,6 +2665,23 @@ draw_dcnow_tr(void) {
                     cur_y += line_height;
                     uint32_t color = (player_idx == dcnow_choice) ? 0xFFFF8800 : text_color;  /* Bright orange for selection */
                     font_bmf_draw(x_item, cur_y, color, dcnow_data.games[dcnow_selected_game].player_names[player_idx]);
+
+                    /* Show level and country for highlighted player */
+                    if (player_idx == dcnow_choice) {
+                        const json_player_details_t *details = &dcnow_data.games[dcnow_selected_game].player_details[player_idx];
+                        if (details->level[0] != '\0' || details->country[0] != '\0') {
+                            char info[64];
+                            if (details->level[0] != '\0' && details->country[0] != '\0') {
+                                snprintf(info, sizeof(info), " [%s | %s]", details->level, details->country);
+                            } else if (details->level[0] != '\0') {
+                                snprintf(info, sizeof(info), " [%s]", details->level);
+                            } else {
+                                snprintf(info, sizeof(info), " [%s]", details->country);
+                            }
+                            int name_x = x_item + (strlen(dcnow_data.games[dcnow_selected_game].player_names[player_idx]) * 10);
+                            font_bmf_draw(name_x, cur_y, 0xFF88CCFF, info);  /* Light blue for details */
+                        }
+                    }
                 }
 
                 /* Show scroll indicators if needed */

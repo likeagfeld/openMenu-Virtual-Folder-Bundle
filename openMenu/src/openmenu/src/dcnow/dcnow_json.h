@@ -15,6 +15,13 @@
 #define JSON_MAX_CODE_LEN 16
 #define JSON_MAX_PLAYERS_PER_GAME 16
 #define JSON_MAX_USERNAME_LEN 32
+#define JSON_MAX_LEVEL_LEN 32
+
+/* Player details structure - minimal info only */
+typedef struct {
+    char level[JSON_MAX_LEVEL_LEN];  /* e.g., "Newbie", "Occasional Gamer", "Enthusiastic Gamer" */
+    char country[4];                 /* 2-letter country code like "US", "UK", "JP" */
+} json_player_details_t;
 
 /* Parsed game structure */
 typedef struct {
@@ -22,6 +29,7 @@ typedef struct {
     char code[JSON_MAX_CODE_LEN];      /* Short code (e.g., "PSO") */
     int players;
     char player_names[JSON_MAX_PLAYERS_PER_GAME][JSON_MAX_USERNAME_LEN];  /* List of usernames */
+    json_player_details_t player_details[JSON_MAX_PLAYERS_PER_GAME];  /* Level and country per player */
 } json_game_t;
 
 /* Parsed JSON data */
