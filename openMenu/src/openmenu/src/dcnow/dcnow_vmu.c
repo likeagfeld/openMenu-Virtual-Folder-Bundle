@@ -6,6 +6,7 @@
 #include <dc/maple/vmu.h>
 #include <dc/maple.h>
 #include <kos.h>
+#include <arch/timer.h>
 #include <crayon_savefile/peripheral.h>
 #include <openmenu_lcd.h>
 #endif
@@ -96,6 +97,60 @@ static int cached_total_players = 0;    /* Cached total players for header */
 #define MAX_CACHED_GAMES 32
 static char cached_game_names[MAX_CACHED_GAMES][8];  /* Short game names */
 static int cached_player_counts[MAX_CACHED_GAMES];   /* Player counts per game */
+
+/* Timestamp for "last updated" display */
+static uint64_t last_update_time_ms = 0;  /* Time of last data update in milliseconds */
+
+/* Tiny 3x5 font for time indicator (fits in header corner)
+ * Each character is 3 pixels wide, 5 pixels tall
+ * Format: 5 bytes per char (5 rows), lower 3 bits = pixels */
+static const uint8_t font_3x5_data[][5] = {
+    /* '0' */ {0x7, 0x5, 0x5, 0x5, 0x7},
+    /* '1' */ {0x2, 0x6, 0x2, 0x2, 0x7},
+    /* '2' */ {0x7, 0x1, 0x7, 0x4, 0x7},
+    /* '3' */ {0x7, 0x1, 0x7, 0x1, 0x7},
+    /* '4' */ {0x5, 0x5, 0x7, 0x1, 0x1},
+    /* '5' */ {0x7, 0x4, 0x7, 0x1, 0x7},
+    /* '6' */ {0x7, 0x4, 0x7, 0x5, 0x7},
+    /* '7' */ {0x7, 0x1, 0x2, 0x2, 0x2},
+    /* '8' */ {0x7, 0x5, 0x7, 0x5, 0x7},
+    /* '9' */ {0x7, 0x5, 0x7, 0x1, 0x7},
+    /* 'M' */ {0x5, 0x7, 0x7, 0x5, 0x5},
+    /* '+' */ {0x0, 0x2, 0x7, 0x2, 0x0},  /* For overflow indicator */
+};
+
+/* Draw a tiny 3x5 character at position (x, y)
+ * color: 0 = white pixel (on black header), 1 = black pixel */
+static void vmu_draw_char_3x5(int x, int y, char c, int color) {
+    int idx = -1;
+    if (c >= '0' && c <= '9') idx = c - '0';
+    else if (c == 'M' || c == 'm') idx = 10;
+    else if (c == '+') idx = 11;
+    else return;  /* Unsupported character */
+
+    for (int row = 0; row < 5; row++) {
+        uint8_t row_data = font_3x5_data[idx][row];
+        for (int col = 0; col < 3; col++) {
+            if (row_data & (1 << (2 - col))) {
+                int px = x + col;
+                int py = y + row;
+                if (py < HEADER_HEIGHT && px >= 0 && px < VMU_WIDTH) {
+                    vmu_set_pixel_raw(px, py, color);
+                }
+            }
+        }
+    }
+}
+
+/* Draw time indicator string using 3x5 font */
+static void vmu_draw_time_indicator(int x, int y, const char *str, int color) {
+    int cur_x = x;
+    while (*str) {
+        vmu_draw_char_3x5(cur_x, y, *str, color);
+        cur_x += 4;  /* 3 pixels wide + 1 pixel spacing */
+        str++;
+    }
+}
 
 /* Set a pixel in the VMU bitmap (raw, no clipping) */
 static void vmu_set_pixel_raw(int x, int y, int on) {
@@ -236,9 +291,33 @@ static void vmu_draw_header(int total_players, bool show_spinner) {
     snprintf(header_text, sizeof(header_text), "ONL:%d", total_players);
     vmu_draw_string_header(1, 0, header_text, 0);  /* White text */
 
-    /* Optional: Draw spinner for refresh indication */
+    /* Step 4: Draw time indicator or spinner on the right side */
     if (show_spinner) {
-        vmu_draw_spinner(VMU_WIDTH - 7, 1);  /* Right side of header */
+        /* Draw spinner when refreshing (takes precedence over time) */
+        vmu_draw_spinner(VMU_WIDTH - 7, 1);
+    } else if (last_update_time_ms > 0) {
+        /* Draw "Xm" time indicator showing minutes since last update
+         * Position: right-aligned in header, using tiny 3x5 font
+         * Vertically centered in header: (8 - 5) / 2 = 1.5 → y=1 */
+        uint64_t now_ms = timer_ms_gettime64();
+        uint64_t elapsed_ms = now_ms - last_update_time_ms;
+        int minutes = (int)(elapsed_ms / 60000);
+
+        char time_str[8];
+        if (minutes >= 99) {
+            snprintf(time_str, sizeof(time_str), "+99");  /* Overflow: 99+ minutes */
+        } else {
+            snprintf(time_str, sizeof(time_str), "%dm", minutes);
+        }
+
+        /* Calculate position: right-align with 1px margin
+         * Each 3x5 char is 4 pixels (3 + 1 spacing), last char no trailing space
+         * "Xm" = 2 chars = 7 pixels, "XXm" = 3 chars = 11 pixels */
+        int time_len = strlen(time_str);
+        int time_width = (time_len * 4) - 1;  /* No trailing space on last char */
+        int time_x = VMU_WIDTH - time_width - 1;  /* 1px right margin */
+
+        vmu_draw_time_indicator(time_x, 1, time_str, 0);  /* White text (0 on black) */
     }
 }
 
@@ -327,6 +406,9 @@ static void vmu_cache_game_data(const dcnow_data_t *data) {
     /* Reset scroll position when new data arrives */
     scroll_offset = 0;
     scroll_frame_counter = 0;
+
+    /* Update the "last updated" timestamp */
+    last_update_time_ms = timer_ms_gettime64();
 }
 
 /* Render DC Now games list to VMU bitmap */
