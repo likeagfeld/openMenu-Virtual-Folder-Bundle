@@ -50,6 +50,7 @@ void dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeo
 void handle_input_dcnow(enum control input);
 void draw_dcnow_op(void);
 void draw_dcnow_tr(void);
+void dcnow_background_tick(void);
 
 void set_cur_game_item(const gd_item* id);
 const gd_item* get_cur_game_item();

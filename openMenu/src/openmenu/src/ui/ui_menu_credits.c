@@ -2902,3 +2902,40 @@ draw_dcnow_tr(void) {
         cur_y += line_height;
     }
 }
+
+/* Background auto-refresh for DC Now data (called from main loop)
+ * This ensures data is refreshed every 60 seconds even when popup is closed */
+void
+dcnow_background_tick(void) {
+    /* Only refresh if network is initialized and we have valid data */
+    if (!dcnow_net_initialized || !dcnow_data.data_valid || dcnow_is_loading) {
+        return;
+    }
+
+    /* Check if we have a valid last fetch timestamp */
+    if (dcnow_last_fetch_ms == 0) {
+        return;
+    }
+
+    /* Check if 60 seconds have passed since last refresh */
+    uint64_t now = timer_ms_gettime64();
+    if ((now - dcnow_last_fetch_ms) < DCNOW_AUTO_REFRESH_MS) {
+        return;
+    }
+
+    /* Time to refresh! */
+    printf("DC Now: Background auto-refresh triggered\n");
+    dcnow_vmu_show_refreshing();
+
+    int result = dcnow_fetch_data(&dcnow_temp_data, 5000);
+    if (result == 0) {
+        memcpy(&dcnow_data, &dcnow_temp_data, sizeof(dcnow_data));
+        dcnow_vmu_update_display(&dcnow_data);
+        printf("DC Now: Background auto-refresh completed successfully\n");
+    } else {
+        /* Fetch failed — keep old data, restore old VMU display */
+        dcnow_vmu_update_display(&dcnow_data);
+        printf("DC Now: Background auto-refresh failed: %d\n", result);
+    }
+    dcnow_last_fetch_ms = timer_ms_gettime64();
+}

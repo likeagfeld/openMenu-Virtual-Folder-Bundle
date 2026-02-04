@@ -206,6 +206,9 @@ draw(void) {
 
     /* Update VMU display (scroll animation + time indicator) if DC Now is active */
     dcnow_vmu_tick_scroll();
+
+    /* Background auto-refresh for DC Now data (every 60 seconds) */
+    dcnow_background_tick();
 }
 
 static void
