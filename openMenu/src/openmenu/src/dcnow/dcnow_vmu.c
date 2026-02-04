@@ -101,6 +101,24 @@ static int cached_player_counts[MAX_CACHED_GAMES];   /* Player counts per game *
 /* Timestamp for "last updated" display */
 static uint64_t last_update_time_ms = 0;  /* Time of last data update in milliseconds */
 
+/* Set a pixel in the VMU bitmap (raw, no clipping) */
+static void vmu_set_pixel_raw(int x, int y, int on) {
+    if (x < 0 || x >= VMU_WIDTH || y < 0 || y >= VMU_HEIGHT) return;
+
+    /* Flip both axes to correct 180-degree rotated display */
+    x = (VMU_WIDTH - 1) - x;
+    y = (VMU_HEIGHT - 1) - y;
+
+    int byte_index = (y * VMU_WIDTH + x) / 8;
+    int bit_index = 7 - ((y * VMU_WIDTH + x) % 8);
+
+    if (on) {
+        dcnow_vmu_bitmap[byte_index] |= (1 << bit_index);
+    } else {
+        dcnow_vmu_bitmap[byte_index] &= ~(1 << bit_index);
+    }
+}
+
 /* Tiny 3x5 font for time indicator (fits in header corner)
  * Each character is 3 pixels wide, 5 pixels tall
  * Format: 5 bytes per char (5 rows), lower 3 bits = pixels */
@@ -149,24 +167,6 @@ static void vmu_draw_time_indicator(int x, int y, const char *str, int color) {
         vmu_draw_char_3x5(cur_x, y, *str, color);
         cur_x += 4;  /* 3 pixels wide + 1 pixel spacing */
         str++;
-    }
-}
-
-/* Set a pixel in the VMU bitmap (raw, no clipping) */
-static void vmu_set_pixel_raw(int x, int y, int on) {
-    if (x < 0 || x >= VMU_WIDTH || y < 0 || y >= VMU_HEIGHT) return;
-
-    /* Flip both axes to correct 180-degree rotated display */
-    x = (VMU_WIDTH - 1) - x;
-    y = (VMU_HEIGHT - 1) - y;
-
-    int byte_index = (y * VMU_WIDTH + x) / 8;
-    int bit_index = 7 - ((y * VMU_WIDTH + x) % 8);
-
-    if (on) {
-        dcnow_vmu_bitmap[byte_index] |= (1 << bit_index);
-    } else {
-        dcnow_vmu_bitmap[byte_index] &= ~(1 << bit_index);
     }
 }
 
