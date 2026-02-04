@@ -432,6 +432,20 @@ menu_accept(void) {
         sf_vm2_send_all[0] = choices[CHOICE_VM2_SEND_ALL];
         sf_boot_mode[0] = choices[CHOICE_BOOT_MODE];
         sf_dcnow_vmu[0] = choices[CHOICE_DCNOW_VMU];
+
+        /* Immediately apply DC Now VMU setting change */
+        if (sf_dcnow_vmu[0] == DCNOW_VMU_OFF) {
+            /* Setting turned OFF - restore OpenMenu logo if DC Now display is active */
+            if (dcnow_vmu_is_active()) {
+                dcnow_vmu_restore_logo();
+            }
+        } else {
+            /* Setting turned ON - update VMU with DC Now data if we have valid data */
+            if (dcnow_data.data_valid) {
+                dcnow_vmu_update_display(&dcnow_data);
+            }
+        }
+
         if (choices[CHOICE_THEME] != UI_SCROLL && choices[CHOICE_THEME] != UI_FOLDERS && sf_region[0] > REGION_END) {
             sf_custom_theme[0] = THEME_ON;
             int num_default_themes = 0;
@@ -2218,23 +2232,25 @@ handle_input_dcnow(enum control input) {
             }
         } break;
         case Y: {
-            /* Y button: Disconnect from network */
+            /* Y button: Reset DC Now state (soft disconnect - no hardware disconnect to avoid lockup) */
             if (dcnow_net_initialized) {
-                printf("DC Now: Disconnecting...\n");
-                dcnow_net_disconnect();
+                printf("DC Now: Resetting state...\n");
+                /* NOTE: We intentionally do NOT call dcnow_net_disconnect() here
+                 * because it has blocking timer_spin_sleep() calls that freeze the UI.
+                 * The network connection stays alive but DC Now state is reset. */
                 dcnow_net_initialized = false;
                 dcnow_data_fetched = false;
                 dcnow_last_fetch_ms = 0;
                 memset(&dcnow_data, 0, sizeof(dcnow_data));
                 snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
-                        "Disconnected. Press A to reconnect");
+                        "Reset. Press A to reconnect");
                 dcnow_data.data_valid = false;
                 dcnow_view = DCNOW_VIEW_GAMES;
                 dcnow_choice = 0;
                 dcnow_scroll_offset = 0;
                 /* Restore VMU to OpenMenu logo */
                 dcnow_vmu_restore_logo();
-                printf("DC Now: Disconnected successfully\n");
+                printf("DC Now: State reset successfully\n");
                 if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
             }
         } break;
@@ -2303,9 +2319,9 @@ draw_dcnow_tr(void) {
         int max_line_len = 30;  /* "Dreamcast NOW! - Online Now" */
         const int icon_space = 36;  /* Extra space for 28px icon + 8px gap */
 
-        /* Check instruction text length */
-        const char* instructions = "Push A to Refresh  |  Push B to Close";
-        int instr_len = strlen(instructions);
+        /* Check instruction text length - account for all buttons: A=Fetch Y=Reset X=Refresh B=Close */
+        const char* instructions = "A=Fetch  Y=Reset  X=Refresh  B=Close";
+        int instr_len = strlen(instructions) + 4;  /* Extra margin for colored buttons */
         if (instr_len > max_line_len) {
             max_line_len = instr_len;
         }
@@ -2315,6 +2331,22 @@ draw_dcnow_tr(void) {
                 int len = strlen(dcnow_data.games[i].game_name) + 15;  /* name + " - 999 players" + margin */
                 if (len > max_line_len) {
                     max_line_len = len;
+                }
+            }
+            /* Check player names and details in player view */
+            if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0 &&
+                dcnow_selected_game < dcnow_data.game_count) {
+                int player_count = dcnow_data.games[dcnow_selected_game].player_count;
+                for (int i = 0; i < player_count && i < 64; i++) {
+                    int len = strlen(dcnow_data.games[dcnow_selected_game].player_names[i]);
+                    const json_player_details_t *details = &dcnow_data.games[dcnow_selected_game].player_details[i];
+                    /* Add space for " [Level | Country]" if present */
+                    if (details->level[0] != '\0' || details->country[0] != '\0') {
+                        len += strlen(details->level) + strlen(details->country) + 8;  /* " [ | ]" + margin */
+                    }
+                    if (len > max_line_len) {
+                        max_line_len = len;
+                    }
                 }
             }
         } else {
@@ -2367,6 +2399,7 @@ draw_dcnow_tr(void) {
         /* Add Dreamcast button color corner accents */
         draw_draw_quad(x - 6, y - 6, 8, 8, 0xFFDD2222);  /* Top-left - RED (A button) */
         draw_draw_quad(x + width - 2, y - 6, 8, 8, 0xFF3399FF);  /* Top-right - BLUE (B button) */
+        draw_draw_quad(x - 6, y + height - 2, 8, 8, 0xFF00DD00);  /* Bottom-left - GREEN (Y button) */
         draw_draw_quad(x + width - 2, y + height - 2, 8, 8, 0xFFFFCC00);  /* Bottom-right - YELLOW (X button) */
 
         int cur_y = y + 2;
@@ -2604,7 +2637,7 @@ draw_dcnow_tr(void) {
             font_bmp_draw_main(instr_x, cur_y, "Y");
             instr_x += 8;
             font_bmp_set_color(0xFFCCCCCC);
-            font_bmp_draw_main(instr_x, cur_y, "=Disconnect  ");
+            font_bmp_draw_main(instr_x, cur_y, "=Reset  ");
             instr_x += 13 * 8;
             /* B button - BLUE */
             font_bmp_set_color(0xFF3399FF);
@@ -2632,7 +2665,7 @@ draw_dcnow_tr(void) {
             font_bmp_draw_main(instr_x, cur_y, "Y");
             instr_x += 8;
             font_bmp_set_color(0xFFCCCCCC);
-            font_bmp_draw_main(instr_x, cur_y, "=Disconnect  ");
+            font_bmp_draw_main(instr_x, cur_y, "=Reset  ");
             instr_x += 13 * 8;
             /* B button - BLUE */
             font_bmp_set_color(0xFF3399FF);
@@ -2655,8 +2688,9 @@ draw_dcnow_tr(void) {
         int max_line_len = 35;  /* Base width for title */
 
         /* Check instruction text length (vector font is ~10 pixels per char) */
-        const char* instructions = "Push A to Refresh  |  Push B to Close";
-        int instr_len = strlen(instructions);
+        /* Account for all buttons: A=Fetch Y=Reset X=Refresh B=Close */
+        const char* instructions = "A=Fetch  Y=Reset  X=Refresh  B=Close";
+        int instr_len = strlen(instructions) + 4;  /* Extra margin for colored buttons */
         if (instr_len > max_line_len) {
             max_line_len = instr_len;
         }
@@ -2667,6 +2701,22 @@ draw_dcnow_tr(void) {
                 int len = strlen(dcnow_data.games[i].game_name) + 15;
                 if (len > max_line_len) {
                     max_line_len = len;
+                }
+            }
+            /* Check player names and details in player view */
+            if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0 &&
+                dcnow_selected_game < dcnow_data.game_count) {
+                int player_count = dcnow_data.games[dcnow_selected_game].player_count;
+                for (int i = 0; i < player_count && i < 64; i++) {
+                    int len = strlen(dcnow_data.games[dcnow_selected_game].player_names[i]);
+                    const json_player_details_t *details = &dcnow_data.games[dcnow_selected_game].player_details[i];
+                    /* Add space for " [Level | Country]" if present */
+                    if (details->level[0] != '\0' || details->country[0] != '\0') {
+                        len += strlen(details->level) + strlen(details->country) + 8;  /* " [ | ]" + margin */
+                    }
+                    if (len > max_line_len) {
+                        max_line_len = len;
+                    }
                 }
             }
         }
@@ -2713,6 +2763,7 @@ draw_dcnow_tr(void) {
         /* Add Dreamcast button color corner accents */
         draw_draw_quad(x - 6, y - 6, 8, 8, 0xFFDD2222);  /* Top-left - RED (A button) */
         draw_draw_quad(x + width - 2, y - 6, 8, 8, 0xFF3399FF);  /* Top-right - BLUE (B button) */
+        draw_draw_quad(x - 6, y + height - 2, 8, 8, 0xFF00DD00);  /* Bottom-left - GREEN (Y button) */
         draw_draw_quad(x + width - 2, y + height - 2, 8, 8, 0xFFFFCC00);  /* Bottom-right - YELLOW (X button) */
 
         int cur_y = y + 2;
@@ -2922,7 +2973,7 @@ draw_dcnow_tr(void) {
             /* Y button - GREEN */
             font_bmf_draw(instr_x, cur_y, 0xFF00DD00, "Y");
             instr_x += 12;
-            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Disconnect  ");
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Reset  ");
             instr_x += 130;
             /* B button - BLUE */
             font_bmf_draw(instr_x, cur_y, 0xFF3399FF, "B");
@@ -2942,7 +2993,7 @@ draw_dcnow_tr(void) {
             /* Y button - GREEN */
             font_bmf_draw(instr_x, cur_y, 0xFF00DD00, "Y");
             instr_x += 12;
-            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Disconnect  ");
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Reset  ");
             instr_x += 130;
             /* B button - BLUE */
             font_bmf_draw(instr_x, cur_y, 0xFF3399FF, "B");
