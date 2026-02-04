@@ -1,6 +1,7 @@
 #include "dcnow_vmu.h"
 #include <string.h>
 #include <stdio.h>
+#include <openmenu_settings.h>
 
 #ifdef _arch_dreamcast
 #include <dc/maple/vmu.h>
@@ -467,6 +468,15 @@ static void vmu_restore_openmenu_logo(void) {
 
 void dcnow_vmu_update_display(const dcnow_data_t *data) {
 #ifdef _arch_dreamcast
+    /* Check if DC Now VMU display is disabled in settings */
+    if (sf_dcnow_vmu[0] == DCNOW_VMU_OFF) {
+        /* If currently active, restore logo */
+        if (dcnow_vmu_active) {
+            dcnow_vmu_restore_logo();
+        }
+        return;
+    }
+
     if (!data || !data->data_valid) {
         /* No valid data, restore logo */
         dcnow_vmu_restore_logo();
@@ -503,12 +513,20 @@ bool dcnow_vmu_is_active(void) {
 
 void dcnow_vmu_show_refreshing(void) {
 #ifdef _arch_dreamcast
+    /* Check if DC Now VMU display is disabled in settings */
+    if (sf_dcnow_vmu[0] == DCNOW_VMU_OFF) {
+        return;
+    }
     vmu_overlay_refresh_indicator();
 #endif
 }
 
 void dcnow_vmu_tick_scroll(void) {
 #ifdef _arch_dreamcast
+    /* Check if DC Now VMU display is disabled in settings */
+    if (sf_dcnow_vmu[0] == DCNOW_VMU_OFF) {
+        return;
+    }
     if (!dcnow_vmu_active) return;
     vmu_tick_scroll();
 #endif

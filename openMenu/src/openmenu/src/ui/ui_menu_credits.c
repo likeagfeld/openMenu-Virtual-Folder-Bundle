@@ -112,7 +112,7 @@ typedef enum CB_OPTION {
 
 #pragma region Settings_Menu
 
-static const char* menu_choice_text[] = {"Style", "Theme", "Aspect", "Beep", "Exit to 3D BIOS", "Sort", "Filter", "Multi-Disc", "Multi-Disc Grouping", "Artwork", "Display Index Numbers", "Disc Details", "Artwork", "Item Details", "Clock", "Marquee Speed", "VMU Game ID", "Boot Mode"};
+static const char* menu_choice_text[] = {"Style", "Theme", "Aspect", "Beep", "Exit to 3D BIOS", "Sort", "Filter", "Multi-Disc", "Multi-Disc Grouping", "Artwork", "Display Index Numbers", "Disc Details", "Artwork", "Item Details", "Clock", "Marquee Speed", "VMU Game ID", "Boot Mode", "DC NOW! VMU"};
 static const char* theme_choice_text[] = {"LineDesc", "Grid3", "Scroll", "Folders"};
 static const char* region_choice_text[] = {"NTSC-U", "NTSC-J", "PAL"};
 static const char* region_choice_text_scroll[] = {"GDMENU"};
@@ -137,6 +137,7 @@ static const char* marquee_speed_choice_text[] = {"Slow", "Medium", "Fast"};
 static const char* clock_choice_text[] = {"On (12-Hour)", "On (24-Hour)", "Off"};
 static const char* vm2_send_all_choice_text[] = {"Send to All", "Send to First", "Off"};
 static const char* boot_mode_choice_text[] = {"Full Boot", "License Only", "Animation Only", "Fast Boot"};
+static const char* dcnow_vmu_choice_text[] = {"On", "Off"};
 static const char* save_choice_text[] = {"Save", "Apply"};
 static const char* credits_text[] = {"Credits"};
 
@@ -169,6 +170,7 @@ static int REGION_CHOICES = (sizeof(region_choice_text) / sizeof(region_choice_t
 #define CLOCK_CHOICES (sizeof(clock_choice_text) / sizeof(clock_choice_text)[0])
 #define VM2_SEND_ALL_CHOICES (sizeof(vm2_send_all_choice_text) / sizeof(vm2_send_all_choice_text)[0])
 #define BOOT_MODE_CHOICES (sizeof(boot_mode_choice_text) / sizeof(boot_mode_choice_text)[0])
+#define DCNOW_VMU_CHOICES (sizeof(dcnow_vmu_choice_text) / sizeof(dcnow_vmu_choice_text)[0])
 
 typedef enum MENU_CHOICE {
     CHOICE_START,
@@ -190,6 +192,7 @@ typedef enum MENU_CHOICE {
     CHOICE_MARQUEE_SPEED,
     CHOICE_VM2_SEND_ALL,
     CHOICE_BOOT_MODE,
+    CHOICE_DCNOW_VMU,
     CHOICE_SAVE,
     CHOICE_DCNOW,
     CHOICE_CREDITS,
@@ -201,13 +204,13 @@ typedef enum MENU_CHOICE {
 static int choices[MENU_CHOICES + 1];
 static int choices_max[MENU_CHOICES + 1] = {
     THEME_CHOICES,     3, ASPECT_CHOICES, BEEP_CHOICES, BIOS_3D_CHOICES, SORT_CHOICES, FILTER_CHOICES,
-    MULTIDISC_CHOICES, MULTIDISC_GROUPING_CHOICES, SCROLL_ART_CHOICES, SCROLL_INDEX_CHOICES, DISC_DETAILS_CHOICES, FOLDERS_ART_CHOICES, FOLDERS_ITEM_DETAILS_CHOICES, CLOCK_CHOICES, MARQUEE_SPEED_CHOICES, VM2_SEND_ALL_CHOICES, BOOT_MODE_CHOICES, 2 /* Apply/Save */};
+    MULTIDISC_CHOICES, MULTIDISC_GROUPING_CHOICES, SCROLL_ART_CHOICES, SCROLL_INDEX_CHOICES, DISC_DETAILS_CHOICES, FOLDERS_ART_CHOICES, FOLDERS_ITEM_DETAILS_CHOICES, CLOCK_CHOICES, MARQUEE_SPEED_CHOICES, VM2_SEND_ALL_CHOICES, BOOT_MODE_CHOICES, DCNOW_VMU_CHOICES, 2 /* Apply/Save */};
 static const char** menu_choice_array[MENU_CHOICES] = {theme_choice_text,       region_choice_text,   aspect_choice_text,
                                                        beep_choice_text,        bios_3d_choice_text,  sort_choice_text,
                                                        filter_choice_text,      multidisc_choice_text, multidisc_grouping_choice_text,
                                                        scroll_art_choice_text,  scroll_index_choice_text, disc_details_choice_text,
                                                        folders_art_choice_text, folders_item_details_choice_text, clock_choice_text, marquee_speed_choice_text, vm2_send_all_choice_text,
-                                                       boot_mode_choice_text};
+                                                       boot_mode_choice_text, dcnow_vmu_choice_text};
 static int current_choice = CHOICE_START;
 static int* input_timeout_ptr = NULL;
 
@@ -307,6 +310,7 @@ menu_setup(enum draw_state* state, theme_color* _colors, int* timeout_ptr, uint3
     choices[CHOICE_CLOCK] = sf_clock[0];
     choices[CHOICE_VM2_SEND_ALL] = sf_vm2_send_all[0];
     choices[CHOICE_BOOT_MODE] = sf_boot_mode[0];
+    choices[CHOICE_DCNOW_VMU] = sf_dcnow_vmu[0];
 
     if (choices[CHOICE_THEME] != UI_SCROLL && choices[CHOICE_THEME] != UI_FOLDERS) {
         menu_choice_array[CHOICE_REGION] = region_choice_text;
@@ -427,6 +431,7 @@ menu_accept(void) {
         sf_clock[0] = choices[CHOICE_CLOCK];
         sf_vm2_send_all[0] = choices[CHOICE_VM2_SEND_ALL];
         sf_boot_mode[0] = choices[CHOICE_BOOT_MODE];
+        sf_dcnow_vmu[0] = choices[CHOICE_DCNOW_VMU];
         if (choices[CHOICE_THEME] != UI_SCROLL && choices[CHOICE_THEME] != UI_FOLDERS && sf_region[0] > REGION_END) {
             sf_custom_theme[0] = THEME_ON;
             int num_default_themes = 0;
@@ -2212,6 +2217,27 @@ handle_input_dcnow(enum control input) {
                 }
             }
         } break;
+        case Y: {
+            /* Y button: Disconnect from network */
+            if (dcnow_net_initialized) {
+                printf("DC Now: Disconnecting...\n");
+                dcnow_net_disconnect();
+                dcnow_net_initialized = false;
+                dcnow_data_fetched = false;
+                dcnow_last_fetch_ms = 0;
+                memset(&dcnow_data, 0, sizeof(dcnow_data));
+                snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
+                        "Disconnected. Press A to reconnect");
+                dcnow_data.data_valid = false;
+                dcnow_view = DCNOW_VIEW_GAMES;
+                dcnow_choice = 0;
+                dcnow_scroll_offset = 0;
+                /* Restore VMU to OpenMenu logo */
+                dcnow_vmu_restore_logo();
+                printf("DC Now: Disconnected successfully\n");
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+            }
+        } break;
         default:
             break;
     }
@@ -2571,8 +2597,15 @@ draw_dcnow_tr(void) {
             font_bmp_draw_main(instr_x, cur_y, "A");
             instr_x += 8;
             font_bmp_set_color(0xFFCCCCCC);
-            font_bmp_draw_main(instr_x, cur_y, "=Fetch Data  |  ");
-            instr_x += 16 * 8;
+            font_bmp_draw_main(instr_x, cur_y, "=Fetch  ");
+            instr_x += 8 * 8;
+            /* Y button - GREEN */
+            font_bmp_set_color(0xFF00DD00);
+            font_bmp_draw_main(instr_x, cur_y, "Y");
+            instr_x += 8;
+            font_bmp_set_color(0xFFCCCCCC);
+            font_bmp_draw_main(instr_x, cur_y, "=Disconnect  ");
+            instr_x += 13 * 8;
             /* B button - BLUE */
             font_bmp_set_color(0xFF3399FF);
             font_bmp_draw_main(instr_x, cur_y, "B");
@@ -2587,13 +2620,20 @@ draw_dcnow_tr(void) {
             font_bmp_set_color(0xFFCCCCCC);
             font_bmp_draw_main(instr_x, cur_y, "=Details  ");
             instr_x += 10 * 8;
-            /* X / LR buttons - YELLOW */
+            /* X button - YELLOW */
             font_bmp_set_color(0xFFFFCC00);
-            font_bmp_draw_main(instr_x, cur_y, "X|LR");
-            instr_x += 4 * 8;
+            font_bmp_draw_main(instr_x, cur_y, "X");
+            instr_x += 8;
             font_bmp_set_color(0xFFCCCCCC);
             font_bmp_draw_main(instr_x, cur_y, "=Refresh  ");
             instr_x += 10 * 8;
+            /* Y button - GREEN */
+            font_bmp_set_color(0xFF00DD00);
+            font_bmp_draw_main(instr_x, cur_y, "Y");
+            instr_x += 8;
+            font_bmp_set_color(0xFFCCCCCC);
+            font_bmp_draw_main(instr_x, cur_y, "=Disconnect  ");
+            instr_x += 13 * 8;
             /* B button - BLUE */
             font_bmp_set_color(0xFF3399FF);
             font_bmp_draw_main(instr_x, cur_y, "B");
@@ -2877,8 +2917,13 @@ draw_dcnow_tr(void) {
             /* A button - RED */
             font_bmf_draw(instr_x, cur_y, 0xFFDD2222, "A");
             instr_x += 12;
-            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Fetch Data  |  ");
-            instr_x += 160;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Fetch  ");
+            instr_x += 80;
+            /* Y button - GREEN */
+            font_bmf_draw(instr_x, cur_y, 0xFF00DD00, "Y");
+            instr_x += 12;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Disconnect  ");
+            instr_x += 130;
             /* B button - BLUE */
             font_bmf_draw(instr_x, cur_y, 0xFF3399FF, "B");
             instr_x += 12;
@@ -2889,11 +2934,16 @@ draw_dcnow_tr(void) {
             instr_x += 12;
             font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Details  ");
             instr_x += 100;
-            /* X / LR buttons - YELLOW */
-            font_bmf_draw(instr_x, cur_y, 0xFFFFCC00, "X|LR");
-            instr_x += 42;
+            /* X button - YELLOW */
+            font_bmf_draw(instr_x, cur_y, 0xFFFFCC00, "X");
+            instr_x += 12;
             font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Refresh  ");
             instr_x += 100;
+            /* Y button - GREEN */
+            font_bmf_draw(instr_x, cur_y, 0xFF00DD00, "Y");
+            instr_x += 12;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Disconnect  ");
+            instr_x += 130;
             /* B button - BLUE */
             font_bmf_draw(instr_x, cur_y, 0xFF3399FF, "B");
             instr_x += 12;
