@@ -431,24 +431,27 @@ static void vmu_update_with_games(const dcnow_data_t *data) {
            data->game_count, data->total_players);
 }
 
-/* Advance scroll by 1 pixel every 3 frames and re-render */
+/* Advance scroll by 1 pixel every 3 frames and re-render
+ * Also updates the time indicator in the header */
 static void vmu_tick_scroll(void) {
-    if (cached_game_count == 0) return;
-
     scroll_frame_counter++;
 
-    /* Move scroll 1 pixel every 3 frames for legibility */
+    /* Update every 3 frames (for smooth scroll and time indicator updates) */
     if (scroll_frame_counter >= 3) {
         scroll_frame_counter = 0;
-        scroll_offset++;
 
-        /* Wrap scroll offset to prevent overflow */
-        int total_list_height = cached_game_count * ROW_HEIGHT;
-        if (scroll_offset >= total_list_height) {
-            scroll_offset = 0;
+        /* Only advance scroll if there are games to scroll through */
+        if (cached_game_count > 0) {
+            scroll_offset++;
+
+            /* Wrap scroll offset to prevent overflow */
+            int total_list_height = cached_game_count * ROW_HEIGHT;
+            if (scroll_offset >= total_list_height) {
+                scroll_offset = 0;
+            }
         }
 
-        /* Re-render the frame */
+        /* Re-render the frame (updates time indicator in header) */
         vmu_render_frame(false);
     }
 }
