@@ -33,6 +33,7 @@
 #include "ui/ui_menu_credits.h"
 #include "vm2/vm2_api.h"
 #include "dcnow/dcnow_net_init.h"
+#include "dcnow/dcnow_vmu.h"
 
 /* UI Collection */
 #include "ui/ui_grid.h"
@@ -202,6 +203,9 @@ draw(void) {
     pvr_list_finish();
 
     pvr_scene_finish();
+
+    /* Update VMU display (scroll animation + time indicator) if DC Now is active */
+    dcnow_vmu_tick_scroll();
 }
 
 static void

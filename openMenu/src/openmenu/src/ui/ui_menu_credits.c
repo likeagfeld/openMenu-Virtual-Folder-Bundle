@@ -2266,9 +2266,6 @@ draw_dcnow_tr(void) {
         }
     }
 
-    /* Tick VMU scroll animation every frame (updates time indicator too) */
-    dcnow_vmu_tick_scroll();
-
     if (sf_ui[0] == UI_SCROLL || sf_ui[0] == UI_FOLDERS) {
         /* Scroll/Folders mode - use bitmap font */
         const int line_height = 20;

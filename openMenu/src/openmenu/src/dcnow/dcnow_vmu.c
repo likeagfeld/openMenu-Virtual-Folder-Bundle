@@ -431,17 +431,18 @@ static void vmu_update_with_games(const dcnow_data_t *data) {
            data->game_count, data->total_players);
 }
 
-/* Advance scroll by 1 pixel every 3 frames and re-render
+/* Advance scroll by 1 pixel every 9 frames and re-render
  * Also updates the time indicator in the header */
 static void vmu_tick_scroll(void) {
     scroll_frame_counter++;
 
-    /* Update every 3 frames (for smooth scroll and time indicator updates) */
-    if (scroll_frame_counter >= 3) {
+    /* Update every 9 frames (slower scroll for better readability) */
+    if (scroll_frame_counter >= 9) {
         scroll_frame_counter = 0;
 
-        /* Only advance scroll if there are games to scroll through */
-        if (cached_game_count > 0) {
+        /* Only advance scroll if there are 3+ games (viewport fits ~2 rows)
+         * Viewport is 23px tall, each row is 8px, so 2 games fit without scroll */
+        if (cached_game_count >= 3) {
             scroll_offset++;
 
             /* Wrap scroll offset to prevent overflow */
