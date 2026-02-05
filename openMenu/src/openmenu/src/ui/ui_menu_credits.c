@@ -4225,6 +4225,7 @@ static dchat_view_t dchat_last_view = DCHAT_VIEW_CONNECT; /* Remembered view for
 static int dchat_choice = 0;
 static int dchat_scroll_offset = 0;
 static bool dchat_is_loading = false;
+static bool dchat_needs_connect = false;
 static bool dchat_needs_login = false;
 static bool dchat_needs_fetch = false;
 static bool dchat_shown_loading = false;
@@ -4394,6 +4395,9 @@ static void dchat_process_keyboard_input(int max_len) {
         uint8_t scancode = INPT_KeyboardScancode(k);
         if (scancode == 0) continue;
 
+        /* Edge detection: only register on first press, not while held */
+        if (!INPT_KeyboardButtonPress(scancode)) continue;
+
         if (scancode == 0x2A) { /* Backspace */
             if (dchat_input_pos > 0) {
                 dchat_input_pos--;
@@ -4445,37 +4449,13 @@ handle_input_discord_chat(enum control input) {
     if (dchat_view == DCHAT_VIEW_CONNECT) {
         switch (input) {
             case A: {
-                /* Connect using selected method */
-                printf("Discross: Starting connection with method %d...\n", dchat_conn_choice);
-                dchat_connection_status_msg[0] = '\0';
-                dcnow_set_status_callback(dchat_connection_status_cb);
-                int net_result = dcnow_net_init_with_method(
-                    dchat_conn_choice == 0 ? DCNOW_CONN_SERIAL : DCNOW_CONN_MODEM);
-                dcnow_set_status_callback(NULL);
-
-                if (net_result < 0) {
-                    printf("Discross: Connection failed: %d\n", net_result);
-                    snprintf(dchat_data.error_message, sizeof(dchat_data.error_message),
-                            "Connection failed (error %d)", net_result);
-                } else {
-                    printf("Discross: Network connected\n");
-                    /* Also mark DC Now as connected since we share the network */
-                    dcnow_net_initialized = true;
-                    /* Proceed to credential entry or auto-login */
-                    if (dchat_data.config_valid) {
-                        dchat_view = DCHAT_VIEW_LOGIN;
-                        dchat_needs_login = true;
-                        dchat_is_loading = true;
-                        dchat_shown_loading = false;
-                    } else {
-                        dchat_view = DCHAT_VIEW_ENTER_HOST;
-                        if (dchat_cred_host[0]) {
-                            strncpy(dchat_input_buf, dchat_cred_host, DCHAT_INPUT_BUF_LEN - 1);
-                        } else {
-                            strcpy(dchat_input_buf, "discross.net");
-                        }
-                        dchat_input_pos = strlen(dchat_input_buf);
-                    }
+                /* Defer connection to draw function so status messages display */
+                if (!dchat_is_loading) {
+                    dchat_needs_connect = true;
+                    dchat_is_loading = true;
+                    dchat_shown_loading = false;
+                    dchat_connection_status_msg[0] = '\0';
+                    dchat_data.error_message[0] = '\0';
                 }
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
@@ -4616,32 +4596,28 @@ handle_input_discord_chat(enum control input) {
             default: break;
         }
 
-        /* Also handle Enter key for sending */
-        if (!INPT_KeyboardNone()) {
-            for (int k = 0; k < INPT_MAX_KEYBOARD_KEYS; k++) {
-                uint8_t scancode = INPT_KeyboardScancode(k);
-                if (scancode == 0x28 && dchat_input_pos > 0 && !dchat_sending) {
-                    dchat_sending = true;
+        /* Also handle Enter key for sending (edge-detected) */
+        if (!INPT_KeyboardNone() && INPT_KeyboardButtonPress(0x28)) {
+            if (dchat_input_pos > 0 && !dchat_sending) {
+                dchat_sending = true;
 #ifdef _arch_dreamcast
-                    int result = dchat_send_message(&dchat_data,
-                        dchat_data.current_channel_id, dchat_input_buf, 5000);
-                    if (result == 0) {
-                        memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
-                        dchat_input_pos = 0;
-                        dchat_needs_fetch = true;
-                        dchat_shown_loading = false;
-                        dchat_is_loading = true;
-                        dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
-                        dchat_view = DCHAT_VIEW_MESSAGES;
-                    }
-#else
+                int result = dchat_send_message(&dchat_data,
+                    dchat_data.current_channel_id, dchat_input_buf, 5000);
+                if (result == 0) {
                     memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
                     dchat_input_pos = 0;
+                    dchat_needs_fetch = true;
+                    dchat_shown_loading = false;
+                    dchat_is_loading = true;
+                    dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
                     dchat_view = DCHAT_VIEW_MESSAGES;
-#endif
-                    dchat_sending = false;
-                    break;
                 }
+#else
+                memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
+                dchat_input_pos = 0;
+                dchat_view = DCHAT_VIEW_MESSAGES;
+#endif
+                dchat_sending = false;
             }
         }
 
@@ -4840,6 +4816,44 @@ void
 draw_discord_chat_tr(void) {
     z_set_cond(205.0f);
 
+    /* --- Handle pending network connection --- */
+#ifdef _arch_dreamcast
+    if (dchat_needs_connect && dchat_shown_loading) {
+        dchat_needs_connect = false;
+        printf("Discross: Starting connection with method %d...\n", dchat_conn_choice);
+        dcnow_set_status_callback(dchat_connection_status_cb);
+        int net_result = dcnow_net_init_with_method(
+            dchat_conn_choice == 0 ? DCNOW_CONN_SERIAL : DCNOW_CONN_MODEM);
+        dcnow_set_status_callback(NULL);
+
+        if (net_result < 0) {
+            printf("Discross: Connection failed: %d\n", net_result);
+            snprintf(dchat_data.error_message, sizeof(dchat_data.error_message),
+                    "Connection failed (error %d)", net_result);
+            dchat_is_loading = false;
+        } else {
+            printf("Discross: Network connected\n");
+            dcnow_net_initialized = true;
+            /* Proceed to credential entry or auto-login */
+            if (dchat_data.config_valid) {
+                dchat_view = DCHAT_VIEW_LOGIN;
+                dchat_needs_login = true;
+                dchat_shown_loading = false;
+                /* Keep dchat_is_loading = true for login */
+            } else {
+                dchat_is_loading = false;
+                dchat_view = DCHAT_VIEW_ENTER_HOST;
+                if (dchat_cred_host[0]) {
+                    strncpy(dchat_input_buf, dchat_cred_host, DCHAT_INPUT_BUF_LEN - 1);
+                } else {
+                    strcpy(dchat_input_buf, "discross.net");
+                }
+                dchat_input_pos = strlen(dchat_input_buf);
+            }
+        }
+    }
+#endif
+
     /* --- Handle pending login --- */
 #ifdef _arch_dreamcast
     if (dchat_needs_login && dchat_shown_loading) {
@@ -5012,40 +5026,50 @@ draw_discord_chat_tr(void) {
 
     /* ---- CONNECTION SELECT VIEW ---- */
     if (dchat_view == DCHAT_VIEW_CONNECT) {
-        font_bmp_set_color(0xFF88CCFF);
-        font_bmp_draw_main(x_item, cur_y, "Select connection method:");
-        cur_y += line_height + 4;
-
-        /* Serial option */
-        font_bmp_set_color(dchat_conn_choice == 0 ? 0xFFFF8800 : text_color);
-        font_bmp_draw_main(x_item, cur_y, dchat_conn_choice == 0 ? "> Serial (Coder's Cable)" : "  Serial (Coder's Cable)");
-        cur_y += line_height;
-
-        /* Modem option */
-        font_bmp_set_color(dchat_conn_choice == 1 ? 0xFFFF8800 : text_color);
-        font_bmp_draw_main(x_item, cur_y, dchat_conn_choice == 1 ? "> Modem (DreamPi)" : "  Modem (DreamPi)");
-        cur_y += line_height;
-
-        /* Status message if any */
-        if (dchat_connection_status_msg[0]) {
-            cur_y += 2;
+        if (dchat_is_loading) {
+            /* Show connecting status */
             font_bmp_set_color(0xFFFFCC00);
-            font_bmp_draw_main(x_item, cur_y, dchat_connection_status_msg);
+            const char *conn_method = dchat_conn_choice == 0 ? "Serial" : "Modem";
+            char connecting_msg[80];
+            snprintf(connecting_msg, sizeof(connecting_msg), "Connecting via %s...", conn_method);
+            font_bmp_draw_main(x_item, cur_y, connecting_msg);
+            cur_y += line_height;
+
+            if (dchat_connection_status_msg[0]) {
+                font_bmp_set_color(text_color);
+                font_bmp_draw_main(x_item, cur_y, dchat_connection_status_msg);
+                cur_y += line_height;
+            }
+            dchat_shown_loading = true;
+        } else {
+            font_bmp_set_color(0xFF88CCFF);
+            font_bmp_draw_main(x_item, cur_y, "Select connection method:");
+            cur_y += line_height + 4;
+
+            /* Serial option */
+            font_bmp_set_color(dchat_conn_choice == 0 ? 0xFFFF8800 : text_color);
+            font_bmp_draw_main(x_item, cur_y, dchat_conn_choice == 0 ? "> Serial (Coder's Cable)" : "  Serial (Coder's Cable)");
+            cur_y += line_height;
+
+            /* Modem option */
+            font_bmp_set_color(dchat_conn_choice == 1 ? 0xFFFF8800 : text_color);
+            font_bmp_draw_main(x_item, cur_y, dchat_conn_choice == 1 ? "> Modem (DreamPi)" : "  Modem (DreamPi)");
+            cur_y += line_height;
+
+            if (dchat_data.error_message[0]) {
+                cur_y += 2;
+                font_bmp_set_color(0xFFFF6666);
+                font_bmp_draw_main(x_item, cur_y, dchat_data.error_message);
+                cur_y += line_height;
+            }
+
+            cur_y += 4;
+            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            cur_y += 6;
+            font_bmp_set_color(0xFF888888);
+            font_bmp_draw_main(x_item, cur_y, "A=Connect  B=Close");
             cur_y += line_height;
         }
-
-        if (dchat_data.error_message[0]) {
-            font_bmp_set_color(0xFFFF6666);
-            font_bmp_draw_main(x_item, cur_y, dchat_data.error_message);
-            cur_y += line_height;
-        }
-
-        cur_y += 4;
-        draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
-        cur_y += 6;
-        font_bmp_set_color(0xFF888888);
-        font_bmp_draw_main(x_item, cur_y, "A=Connect  B=Close");
-        cur_y += line_height;
 
     /* ---- CREDENTIAL ENTRY VIEWS ---- */
     } else if (dchat_view == DCHAT_VIEW_ENTER_HOST ||
