@@ -32,6 +32,7 @@
 
 /* External declaration for VM2/VMUPro/USB4Maple detection */
 #include <dc/maple.h>
+#include "vm2/vm2_api.h"
 extern int vm2_device_count;
 extern void vm2_rescan(void);
 
@@ -1003,16 +1004,21 @@ string_outer_concat(char* out, const char* left, const char* right, int len) {
 }
 
 static void
-draw_popup_menu(int x, int y, int width, int height) {
+draw_popup_menu_ex(int x, int y, int width, int height, int ui_mode) {
     const int border_width = 2;
     draw_draw_quad(x - border_width, y - border_width, width + (2 * border_width), height + (2 * border_width),
                    menu_bkg_border_color);
     draw_draw_quad(x, y, width, height, menu_bkg_color);
 
-    if (sf_ui[0] == UI_SCROLL || sf_ui[0] == UI_FOLDERS) {
+    if (ui_mode == UI_SCROLL || ui_mode == UI_FOLDERS) {
         /* Top header */
         draw_draw_quad(x, y, width, 20, menu_bkg_border_color);
     }
+}
+
+static void
+draw_popup_menu(int x, int y, int width, int height) {
+    draw_popup_menu_ex(x, y, width, height, sf_ui[0]);
 }
 
 void
