@@ -4475,6 +4475,18 @@ handle_input_discord_chat(enum control input) {
     /* --- Credential entry: Host --- */
     if (dchat_view == DCHAT_VIEW_ENTER_HOST) {
         dchat_process_keyboard_input(SF_DISCROSS_HOST_LEN);
+        /* Enter key on keyboard = advance to next field */
+        if (INPT_KeyboardButtonPress(0x28) && dchat_input_pos > 0) {
+            strncpy(dchat_cred_host, dchat_input_buf, SF_DISCROSS_HOST_LEN - 1);
+            dchat_cred_host[SF_DISCROSS_HOST_LEN - 1] = '\0';
+            dchat_view = DCHAT_VIEW_ENTER_USER;
+            strncpy(dchat_input_buf, dchat_cred_user, DCHAT_INPUT_BUF_LEN - 1);
+            dchat_input_pos = strlen(dchat_input_buf);
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            return;
+        }
+        /* Skip controller actions when keyboard is active (keys map to buttons) */
+        if (!INPT_KeyboardNone()) return;
         if (dchat_handle_text_entry_controls(input, SF_DISCROSS_HOST_LEN)) return;
         switch (input) {
             case A: {
@@ -4500,6 +4512,18 @@ handle_input_discord_chat(enum control input) {
     /* --- Credential entry: Username --- */
     if (dchat_view == DCHAT_VIEW_ENTER_USER) {
         dchat_process_keyboard_input(SF_DISCROSS_CRED_LEN);
+        /* Enter key on keyboard = advance to next field */
+        if (INPT_KeyboardButtonPress(0x28) && dchat_input_pos > 0) {
+            strncpy(dchat_cred_user, dchat_input_buf, SF_DISCROSS_CRED_LEN - 1);
+            dchat_cred_user[SF_DISCROSS_CRED_LEN - 1] = '\0';
+            dchat_view = DCHAT_VIEW_ENTER_PASS;
+            strncpy(dchat_input_buf, dchat_cred_pass, DCHAT_INPUT_BUF_LEN - 1);
+            dchat_input_pos = strlen(dchat_input_buf);
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            return;
+        }
+        /* Skip controller actions when keyboard is active (keys map to buttons) */
+        if (!INPT_KeyboardNone()) return;
         if (dchat_handle_text_entry_controls(input, SF_DISCROSS_CRED_LEN)) return;
         switch (input) {
             case A: {
@@ -4528,6 +4552,22 @@ handle_input_discord_chat(enum control input) {
     /* --- Credential entry: Password --- */
     if (dchat_view == DCHAT_VIEW_ENTER_PASS) {
         dchat_process_keyboard_input(SF_DISCROSS_CRED_LEN);
+        /* Enter key on keyboard = submit credentials and login */
+        if (INPT_KeyboardButtonPress(0x28) && dchat_input_pos > 0) {
+            strncpy(dchat_cred_pass, dchat_input_buf, SF_DISCROSS_CRED_LEN - 1);
+            dchat_cred_pass[SF_DISCROSS_CRED_LEN - 1] = '\0';
+            dchat_set_config(&dchat_data, dchat_cred_host, DCHAT_DEFAULT_PORT,
+                             dchat_cred_user, dchat_cred_pass);
+            dchat_save_creds_to_settings();
+            dchat_view = DCHAT_VIEW_LOGIN;
+            dchat_needs_login = true;
+            dchat_is_loading = true;
+            dchat_shown_loading = false;
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            return;
+        }
+        /* Skip controller actions when keyboard is active (keys map to buttons) */
+        if (!INPT_KeyboardNone()) return;
         if (dchat_handle_text_entry_controls(input, SF_DISCROSS_CRED_LEN)) return;
         switch (input) {
             case A: {
@@ -4561,6 +4601,35 @@ handle_input_discord_chat(enum control input) {
     /* --- Compose view: keyboard text input --- */
     if (dchat_view == DCHAT_VIEW_COMPOSE) {
         dchat_process_keyboard_input(DCHAT_INPUT_BUF_LEN);
+        /* Enter key on keyboard = send message */
+        if (INPT_KeyboardButtonPress(0x28)) {
+            if (dchat_input_pos > 0 && !dchat_sending) {
+                dchat_sending = true;
+                printf("Discross: Sending message: %s\n", dchat_input_buf);
+#ifdef _arch_dreamcast
+                int result = dchat_send_message(&dchat_data,
+                    dchat_data.current_channel_id, dchat_input_buf, 5000);
+                if (result == 0) {
+                    memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
+                    dchat_input_pos = 0;
+                    dchat_needs_fetch = true;
+                    dchat_shown_loading = false;
+                    dchat_is_loading = true;
+                    dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
+                    dchat_view = DCHAT_VIEW_MESSAGES;
+                }
+#else
+                memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
+                dchat_input_pos = 0;
+                dchat_view = DCHAT_VIEW_MESSAGES;
+#endif
+                dchat_sending = false;
+            }
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            return;
+        }
+        /* Skip controller actions when keyboard is active (keys map to buttons) */
+        if (!INPT_KeyboardNone()) return;
         if (dchat_handle_text_entry_controls(input, DCHAT_INPUT_BUF_LEN)) return;
 
         switch (input) {
@@ -4594,31 +4663,6 @@ handle_input_discord_chat(enum control input) {
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
             default: break;
-        }
-
-        /* Also handle Enter key for sending (edge-detected) */
-        if (!INPT_KeyboardNone() && INPT_KeyboardButtonPress(0x28)) {
-            if (dchat_input_pos > 0 && !dchat_sending) {
-                dchat_sending = true;
-#ifdef _arch_dreamcast
-                int result = dchat_send_message(&dchat_data,
-                    dchat_data.current_channel_id, dchat_input_buf, 5000);
-                if (result == 0) {
-                    memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
-                    dchat_input_pos = 0;
-                    dchat_needs_fetch = true;
-                    dchat_shown_loading = false;
-                    dchat_is_loading = true;
-                    dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
-                    dchat_view = DCHAT_VIEW_MESSAGES;
-                }
-#else
-                memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
-                dchat_input_pos = 0;
-                dchat_view = DCHAT_VIEW_MESSAGES;
-#endif
-                dchat_sending = false;
-            }
         }
 
         return;
