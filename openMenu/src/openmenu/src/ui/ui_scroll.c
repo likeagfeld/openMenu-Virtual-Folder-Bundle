@@ -498,7 +498,7 @@ menu_increment(int amount) {
 
 static void
 menu_cb(void) {
-    if ((navigate_timeout > 0) || (list_len <= 0)) {
+    if (list_len <= 0) {
         return;
     }
 
@@ -534,7 +534,7 @@ run_cb(void) {
 
 static void
 menu_accept(void) {
-    if ((navigate_timeout > 0) || (list_len <= 0)) {
+    if (list_len <= 0) {
         return;
     }
 
@@ -556,7 +556,7 @@ menu_accept(void) {
 
         current_selected_item = 0;
         current_starting_index = 0;
-        navigate_timeout = INPUT_TIMEOUT_INITIAL * 2;
+        navigate_timeout = 3;
         draw_current = DRAW_UI;
         return;
     }
@@ -593,9 +593,6 @@ menu_accept(void) {
 
 static void
 menu_settings(void) {
-    if (navigate_timeout > 0) {
-        return;
-    }
 
     draw_current = DRAW_MENU;
     menu_setup(&draw_current, &cur_theme->colors, &navigate_timeout, cur_theme->colors.highlight_color);
@@ -603,9 +600,6 @@ menu_settings(void) {
 
 static void
 menu_exit(void) {
-    if (navigate_timeout > 0) {
-        return;
-    }
 
     set_cur_game_item(list_current[current_selected_item]);
 
@@ -695,7 +689,7 @@ FUNCTION(UI_NAME, setup) {
 
     current_selected_item = 0;
     current_starting_index = 0;
-    navigate_timeout = INPUT_TIMEOUT_INITIAL * 2;
+    navigate_timeout = 3;
     draw_current = DRAW_UI;
 
     /* Initialize marquee state */
@@ -726,6 +720,9 @@ FUNCTION_INPUT(UI_NAME, handle_input) {
         } break;
         case DRAW_PSX_LAUNCHER: {
             handle_input_psx_launcher(input_current);
+        } break;
+        case DRAW_SAVELOAD: {
+            handle_input_saveload(input_current);
         } break;
         default:
         case DRAW_UI: {
@@ -763,6 +760,10 @@ FUNCTION(UI_NAME, drawOP) {
             /* PSX launcher popup on top */
             draw_psx_launcher_op();
         } break;
+        case DRAW_SAVELOAD: {
+            /* Save/Load popup on top */
+            draw_saveload_op();
+        } break;
         default:
         case DRAW_UI: {
             /* always drawn */
@@ -799,6 +800,9 @@ FUNCTION(UI_NAME, drawTR) {
         case DRAW_PSX_LAUNCHER: {
             /* PSX launcher popup on top */
             draw_psx_launcher_tr();
+        } break;
+        case DRAW_SAVELOAD: {
+            draw_saveload_tr();
         } break;
         default:
         case DRAW_UI: {
