@@ -781,6 +781,9 @@ FUNCTION_INPUT(UI_NAME, handle_input) {
         case DRAW_DCNOW_PLAYERS: {
             handle_input_dcnow(input_current);
         } break;
+        case DRAW_DISCORD_CHAT: {
+            handle_input_discord_chat(input_current);
+        } break;
         default:
         case DRAW_UI: {
             handle_input_ui(input_current);
@@ -825,6 +828,9 @@ FUNCTION(UI_NAME, drawOP) {
         case DRAW_DCNOW_PLAYERS: {
             /* DC Now popup on top */
             draw_dcnow_op();
+        } break;
+        case DRAW_DISCORD_CHAT: {
+            draw_discord_chat_op();
         } break;
         default:
         case DRAW_UI: {
@@ -872,6 +878,9 @@ FUNCTION(UI_NAME, drawTR) {
         case DRAW_DCNOW_PLAYERS: {
             /* DC Now popup on top */
             draw_dcnow_tr();
+        } break;
+        case DRAW_DISCORD_CHAT: {
+            draw_discord_chat_tr();
         } break;
         default:
         case DRAW_UI: {

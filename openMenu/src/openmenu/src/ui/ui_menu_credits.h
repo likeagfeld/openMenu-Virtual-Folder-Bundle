@@ -57,5 +57,10 @@ void draw_dcnow_op(void);
 void draw_dcnow_tr(void);
 void dcnow_background_tick(void);
 
+void discord_chat_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_ptr, uint32_t title_color);
+void handle_input_discord_chat(enum control input);
+void draw_discord_chat_op(void);
+void draw_discord_chat_tr(void);
+
 void set_cur_game_item(const gd_item* id);
 const gd_item* get_cur_game_item();

@@ -1002,6 +1002,9 @@ FUNCTION(UI_NAME, drawTR) {
         case DRAW_DCNOW_PLAYERS: {
             draw_dcnow_tr();
         } break;
+        case DRAW_DISCORD_CHAT: {
+            draw_discord_chat_tr();
+        } break;
         default:
         case DRAW_UI: {
             /* Game list and artwork already drawn above */
@@ -1039,6 +1042,9 @@ FUNCTION_INPUT(UI_NAME, handle_input) {
         } break;
         case DRAW_DCNOW_PLAYERS: {
             handle_input_dcnow(input_current);
+        } break;
+        case DRAW_DISCORD_CHAT: {
+            handle_input_discord_chat(input_current);
         } break;
         default:
         case DRAW_UI: {

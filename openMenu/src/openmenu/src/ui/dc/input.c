@@ -189,3 +189,14 @@ INPT_KeyboardButtonPress(uint8_t kbtn) {
     }
     return true;
 }
+
+uint8_t
+INPT_KeyboardScancode(int index) {
+    if (index < 0 || index >= INPT_MAX_KEYBOARD_KEYS) return 0;
+    return _current.kbd_buttons[index];
+}
+
+uint8_t
+INPT_KeyboardModifiers(void) {
+    return _current.kbd_modifiers;
+}

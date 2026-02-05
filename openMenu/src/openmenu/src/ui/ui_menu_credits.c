@@ -30,6 +30,9 @@
 /* Include dcnow_vmu.h early for VMU setting changes */
 #include "../dcnow/dcnow_vmu.h"
 
+/* Discord chat support */
+#include "../dchat/dchat_api.h"
+
 /* External declaration for VM2/VMUPro/USB4Maple detection */
 #include <dc/maple.h>
 #include "vm2/vm2_api.h"
@@ -199,6 +202,7 @@ typedef enum MENU_CHOICE {
     CHOICE_DCNOW_VMU,
     CHOICE_SAVE,
     CHOICE_DCNOW,
+    CHOICE_DISCORD_CHAT,
     CHOICE_CREDITS,
     CHOICE_END = CHOICE_CREDITS
 } MENU_CHOICE;
@@ -484,6 +488,10 @@ menu_accept(void) {
         /* Call dcnow_setup() to initialize the DC Now popup */
         dcnow_setup(state_ptr, stored_colors, input_timeout_ptr, menu_title_color);
     }
+    if (current_choice == CHOICE_DISCORD_CHAT) {
+        /* Call discord_chat_setup() to initialize the Discord Chat popup */
+        discord_chat_setup(state_ptr, stored_colors, input_timeout_ptr, menu_title_color);
+    }
     if (current_choice == CHOICE_CREDITS) {
         *state_ptr = DRAW_CREDITS;
         *input_timeout_ptr = (20 * 1) /* 1/3 second */;
@@ -552,8 +560,11 @@ menu_choice_prev(void) {
         if (current_choice == CHOICE_BEEP) {
             skip = 1;
         }
-        /* Skip DCNOW in up/down navigation (reached via left/right from Save/Apply) */
+        /* Skip DCNOW/DISCORD_CHAT in up/down navigation (reached via left/right from Save/Apply) */
         if (current_choice == CHOICE_DCNOW) {
+            skip = 1;
+        }
+        if (current_choice == CHOICE_DISCORD_CHAT) {
             skip = 1;
         }
         /* Skip CREDITS in up/down navigation (reached via left/right from Save/Apply) */
@@ -634,8 +645,11 @@ menu_choice_next(void) {
         if (current_choice == CHOICE_BEEP) {
             skip = 1;
         }
-        /* Skip DCNOW in up/down navigation (reached via left/right from Save/Apply) */
+        /* Skip DCNOW/DISCORD_CHAT in up/down navigation (reached via left/right from Save/Apply) */
         if (current_choice == CHOICE_DCNOW) {
+            skip = 1;
+        }
+        if (current_choice == CHOICE_DISCORD_CHAT) {
             skip = 1;
         }
         /* Skip CREDITS in up/down navigation (reached via left/right from Save/Apply) */
@@ -702,9 +716,15 @@ menu_choice_left(void) {
     if (*input_timeout_ptr > 0) {
         return;
     }
-    /* Handle Save/Apply/DC Now/Credits row navigation */
+    /* Handle Save/Apply/DC Now/Discord/Credits row navigation */
     if (current_choice == CHOICE_CREDITS) {
-        /* Move left from Credits to DC Now */
+        /* Move left from Credits to Discord Chat */
+        current_choice = CHOICE_DISCORD_CHAT;
+        *input_timeout_ptr = INPUT_TIMEOUT;
+        return;
+    }
+    if (current_choice == CHOICE_DISCORD_CHAT) {
+        /* Move left from Discord Chat to DC Now */
         current_choice = CHOICE_DCNOW;
         *input_timeout_ptr = INPUT_TIMEOUT;
         return;
@@ -735,14 +755,20 @@ menu_choice_right(void) {
     if (*input_timeout_ptr > 0) {
         return;
     }
-    /* Handle Save/Apply/DC Now/Credits row navigation */
+    /* Handle Save/Apply/DC Now/Discord/Credits row navigation */
     if (current_choice == CHOICE_CREDITS) {
         /* Already on Credits (rightmost), do nothing */
         return;
     }
-    if (current_choice == CHOICE_DCNOW) {
-        /* Move right from DC Now to Credits */
+    if (current_choice == CHOICE_DISCORD_CHAT) {
+        /* Move right from Discord Chat to Credits */
         current_choice = CHOICE_CREDITS;
+        *input_timeout_ptr = INPUT_TIMEOUT;
+        return;
+    }
+    if (current_choice == CHOICE_DCNOW) {
+        /* Move right from DC Now to Discord Chat */
+        current_choice = CHOICE_DISCORD_CHAT;
         *input_timeout_ptr = INPUT_TIMEOUT;
         return;
     }
@@ -1131,23 +1157,26 @@ draw_menu_tr(void) {
             font_bmp_draw_main(x_item, cur_y, line_buf);
         }
 
-        /* Draw Save/Apply/DC Now/Credits on one line */
+        /* Draw Save/Apply/DC Now/Discord/Credits on one line */
         uint32_t save_color =
             ((current_choice == CHOICE_SAVE) && (choices[CHOICE_SAVE] == 0) ? highlight_color : text_color);
         uint32_t apply_color =
             ((current_choice == CHOICE_SAVE) && (choices[CHOICE_SAVE] == 1) ? highlight_color : text_color);
         uint32_t dcnow_color = (current_choice == CHOICE_DCNOW ? highlight_color : text_color);
+        uint32_t discord_color = (current_choice == CHOICE_DISCORD_CHAT ? highlight_color : text_color);
         uint32_t credits_color = (current_choice == CHOICE_CREDITS ? highlight_color : text_color);
         cur_y += line_height;
-        /* Save, Apply, DC NOW!, Credits across the bottom */
+        /* Save, Apply, DC NOW!, Discord, Credits across the bottom */
         font_bmp_set_color(save_color);
-        font_bmp_draw_main(640 / 2 - (8 * 18), cur_y, save_choice_text[0]);
+        font_bmp_draw_main(640 / 2 - (8 * 22), cur_y, save_choice_text[0]);
         font_bmp_set_color(apply_color);
-        font_bmp_draw_main(640 / 2 - (8 * 7), cur_y, save_choice_text[1]);
+        font_bmp_draw_main(640 / 2 - (8 * 12), cur_y, save_choice_text[1]);
         font_bmp_set_color(dcnow_color);
-        font_bmp_draw_main(640 / 2 + (8 * 1), cur_y, "DC NOW!");
+        font_bmp_draw_main(640 / 2 - (8 * 4), cur_y, "DC NOW!");
+        font_bmp_set_color(discord_color);
+        font_bmp_draw_main(640 / 2 + (8 * 5), cur_y, "Discord");
         font_bmp_set_color(credits_color);
-        font_bmp_draw_main(640 / 2 + (8 * 11), cur_y, credits_text[0]);
+        font_bmp_draw_main(640 / 2 + (8 * 14), cur_y, credits_text[0]);
 
         /* Add empty line for spacing */
         cur_y += line_height;
@@ -1262,18 +1291,20 @@ draw_menu_tr(void) {
             }
         }
 
-        /* Draw Save/Apply/DC Now/Credits on one line */
+        /* Draw Save/Apply/DC Now/Discord/Credits on one line */
         uint32_t save_color =
             ((current_choice == CHOICE_SAVE) && (choices[CHOICE_SAVE] == 0) ? highlight_color : text_color);
         uint32_t apply_color =
             ((current_choice == CHOICE_SAVE) && (choices[CHOICE_SAVE] == 1) ? highlight_color : text_color);
         uint32_t dcnow_color = ((current_choice == CHOICE_DCNOW) ? highlight_color : text_color);
+        uint32_t discord_color = ((current_choice == CHOICE_DISCORD_CHAT) ? highlight_color : text_color);
         uint32_t credits_color = ((current_choice == CHOICE_CREDITS) ? highlight_color : text_color);
         cur_y += line_height;
-        font_bmf_draw_centered(640 / 2 - (width / 2) + 50, cur_y, save_color, save_choice_text[0]);
-        font_bmf_draw_centered(640 / 2 - (width / 6), cur_y, apply_color, save_choice_text[1]);
-        font_bmf_draw_centered(640 / 2 + (width / 6), cur_y, dcnow_color, "DC NOW!");
-        font_bmf_draw_centered(640 / 2 + (width / 2) - 50, cur_y, credits_color, credits_text[0]);
+        font_bmf_draw_centered(640 / 2 - (width / 2) + 30, cur_y, save_color, save_choice_text[0]);
+        font_bmf_draw_centered(640 / 2 - (width / 4), cur_y, apply_color, save_choice_text[1]);
+        font_bmf_draw_centered(640 / 2, cur_y, dcnow_color, "DC NOW!");
+        font_bmf_draw_centered(640 / 2 + (width / 4), cur_y, discord_color, "Discord");
+        font_bmf_draw_centered(640 / 2 + (width / 2) - 30, cur_y, credits_color, credits_text[0]);
 
         /* Add empty line for spacing */
         cur_y += line_height;
@@ -4165,4 +4196,545 @@ dcnow_background_tick(void) {
         printf("DC Now: Background auto-refresh failed: %d\n", result);
     }
     dcnow_last_fetch_ms = timer_ms_gettime64();
+}
+
+/* ==========================================================================
+ * Discord Chat Integration
+ * Allows Dreamcast users to read and send messages in a Discord channel
+ * using the Discord Bot HTTP API via DreamPi/BBA network connection.
+ * ========================================================================== */
+
+typedef enum {
+    DCHAT_VIEW_MESSAGES,       /* Viewing message list */
+    DCHAT_VIEW_COMPOSE         /* Typing a new message */
+} dchat_view_t;
+
+static dchat_data_t dchat_data;
+static dchat_view_t dchat_view = DCHAT_VIEW_MESSAGES;
+static int dchat_choice = 0;
+static int dchat_scroll_offset = 0;
+static bool dchat_data_fetched = false;
+static bool dchat_is_loading = false;
+static bool dchat_needs_fetch = false;
+static bool dchat_shown_loading = false;
+static bool dchat_initialized = false;
+static int* dchat_navigate_timeout = NULL;
+
+/* Text input buffer for composing messages */
+static char dchat_input_buf[DCHAT_INPUT_BUF_LEN];
+static int dchat_input_pos = 0;
+static bool dchat_sending = false;
+
+/* Auto-refresh interval (30 seconds for chat) */
+#define DCHAT_AUTO_REFRESH_MS   30000
+#define DCHAT_INPUT_TIMEOUT_INITIAL (10)
+static uint64_t dchat_last_fetch_ms = 0;
+
+/* Keyboard scancode to ASCII mapping for Dreamcast keyboard.
+ * Only handles basic printable ASCII for chat messages. */
+static char dchat_scancode_to_char(uint8_t scancode, uint8_t modifiers) {
+    /* KBD_MOD_LSHIFT=0x01, KBD_MOD_RSHIFT=0x02 */
+    int shift = (modifiers & 0x03) != 0;
+
+    /* Letters a-z (scancodes 0x04-0x1D) */
+    if (scancode >= 0x04 && scancode <= 0x1D) {
+        char base = 'a' + (scancode - 0x04);
+        return shift ? (base - 32) : base;
+    }
+
+    /* Numbers 1-9,0 (scancodes 0x1E-0x27) */
+    if (scancode >= 0x1E && scancode <= 0x27) {
+        if (shift) {
+            const char shifted_nums[] = "!@#$%^&*()";
+            return shifted_nums[scancode - 0x1E];
+        }
+        if (scancode == 0x27) return '0';
+        return '1' + (scancode - 0x1E);
+    }
+
+    /* Space */
+    if (scancode == 0x2C) return ' ';
+
+    /* Common punctuation */
+    switch (scancode) {
+        case 0x2D: return shift ? '_' : '-';
+        case 0x2E: return shift ? '+' : '=';
+        case 0x2F: return shift ? '{' : '[';
+        case 0x30: return shift ? '}' : ']';
+        case 0x33: return shift ? ':' : ';';
+        case 0x34: return shift ? '"' : '\'';
+        case 0x36: return shift ? '<' : ',';
+        case 0x37: return shift ? '>' : '.';
+        case 0x38: return shift ? '?' : '/';
+        case 0x31: return shift ? '|' : '\\';
+        case 0x35: return shift ? '~' : '`';
+    }
+
+    return 0;  /* Not a printable character */
+}
+
+void
+discord_chat_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_ptr, uint32_t title_color) {
+    popup_setup(state, _colors, timeout_ptr, title_color);
+    dchat_choice = 0;
+    dchat_scroll_offset = 0;
+    dchat_view = DCHAT_VIEW_MESSAGES;
+    dchat_navigate_timeout = timeout_ptr;
+
+    *state = DRAW_DISCORD_CHAT;
+
+    /* Initialize Discord chat if not done yet */
+    if (!dchat_initialized) {
+        dchat_init();
+        dchat_initialized = true;
+    }
+
+    /* If we have network and haven't fetched yet, try to fetch */
+    if (dchat_data.config_loaded && dchat_network_available() && !dchat_data_fetched && !dchat_is_loading) {
+        dchat_is_loading = true;
+        int result = dchat_fetch_messages(&dchat_data, 5000);
+        if (result == 0) {
+            dchat_data_fetched = true;
+            dchat_last_fetch_ms = timer_ms_gettime64();
+        }
+        dchat_is_loading = false;
+    } else if (!dchat_data.config_loaded) {
+        memset(&dchat_data.messages, 0, sizeof(dchat_data.messages));
+        dchat_data.message_count = 0;
+        strcpy(dchat_data.error_message, "No DISCORD.CFG - place config on SD card");
+        dchat_data.data_valid = false;
+    } else if (!dchat_network_available()) {
+        strcpy(dchat_data.error_message, "No network - connect via DC Now first");
+        dchat_data.data_valid = false;
+    }
+}
+
+void
+handle_input_discord_chat(enum control input) {
+    if (dchat_navigate_timeout && *dchat_navigate_timeout > 0) {
+        return;
+    }
+
+    /* In compose view, handle keyboard text input */
+    if (dchat_view == DCHAT_VIEW_COMPOSE) {
+        switch (input) {
+            case B: {
+                /* Cancel compose, go back to messages */
+                dchat_view = DCHAT_VIEW_MESSAGES;
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            case A: {
+                /* Send the message if buffer is not empty */
+                if (dchat_input_pos > 0 && !dchat_sending) {
+                    dchat_sending = true;
+                    printf("Discord Chat: Sending message: %s\n", dchat_input_buf);
+
+#ifdef _arch_dreamcast
+                    int result = dchat_send_message(&dchat_data, dchat_input_buf, 5000);
+                    if (result == 0) {
+                        /* Clear input buffer */
+                        memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
+                        dchat_input_pos = 0;
+                        /* Refresh messages to see our sent message */
+                        dchat_needs_fetch = true;
+                        dchat_shown_loading = false;
+                        dchat_is_loading = true;
+                        dchat_view = DCHAT_VIEW_MESSAGES;
+                    }
+#else
+                    memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
+                    dchat_input_pos = 0;
+                    dchat_view = DCHAT_VIEW_MESSAGES;
+#endif
+                    dchat_sending = false;
+                }
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            case LEFT: {
+                /* Move cursor left (for future cursor positioning) */
+            } break;
+            case RIGHT: {
+                /* Move cursor right */
+            } break;
+            case Y: {
+                /* Backspace - delete last character */
+                if (dchat_input_pos > 0) {
+                    dchat_input_pos--;
+                    dchat_input_buf[dchat_input_pos] = '\0';
+                }
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            case X: {
+                /* Add a space */
+                if (dchat_input_pos < DCHAT_INPUT_BUF_LEN - 1) {
+                    dchat_input_buf[dchat_input_pos++] = ' ';
+                    dchat_input_buf[dchat_input_pos] = '\0';
+                }
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            default:
+                break;
+        }
+
+        /* Handle keyboard text input (independent of controller input) */
+        if (!INPT_KeyboardNone()) {
+            for (int k = 0; k < INPT_MAX_KEYBOARD_KEYS; k++) {
+                uint8_t scancode = INPT_KeyboardScancode(k);
+                if (scancode == 0) continue;
+
+                /* Backspace scancode (0x2A) */
+                if (scancode == 0x2A) {
+                    if (dchat_input_pos > 0) {
+                        dchat_input_pos--;
+                        dchat_input_buf[dchat_input_pos] = '\0';
+                    }
+                    continue;
+                }
+
+                /* Enter scancode (0x28) - send message */
+                if (scancode == 0x28) {
+                    if (dchat_input_pos > 0 && !dchat_sending) {
+                        dchat_sending = true;
+#ifdef _arch_dreamcast
+                        int result = dchat_send_message(&dchat_data, dchat_input_buf, 5000);
+                        if (result == 0) {
+                            memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
+                            dchat_input_pos = 0;
+                            dchat_needs_fetch = true;
+                            dchat_shown_loading = false;
+                            dchat_is_loading = true;
+                            dchat_view = DCHAT_VIEW_MESSAGES;
+                        }
+#else
+                        memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
+                        dchat_input_pos = 0;
+                        dchat_view = DCHAT_VIEW_MESSAGES;
+#endif
+                        dchat_sending = false;
+                    }
+                    continue;
+                }
+
+                /* Convert scancode to character */
+                char c = dchat_scancode_to_char(scancode, INPT_KeyboardModifiers());
+                if (c && dchat_input_pos < DCHAT_INPUT_BUF_LEN - 1) {
+                    dchat_input_buf[dchat_input_pos++] = c;
+                    dchat_input_buf[dchat_input_pos] = '\0';
+                }
+            }
+        }
+
+        return;  /* Don't process message view controls */
+    }
+
+    /* Message list view controls */
+    switch (input) {
+        case A: {
+            if (!dchat_data.data_valid && dchat_data.config_loaded) {
+                /* Try to fetch messages */
+                dchat_is_loading = true;
+                dchat_needs_fetch = true;
+                dchat_shown_loading = false;
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            }
+        } break;
+        case X: {
+            /* Refresh messages */
+            if (dchat_data.config_loaded) {
+                dchat_data_fetched = false;
+                dchat_data.data_valid = false;
+                dchat_is_loading = true;
+                dchat_needs_fetch = true;
+                dchat_shown_loading = false;
+                dchat_choice = 0;
+                dchat_scroll_offset = 0;
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            }
+        } break;
+        case Y: {
+            /* Open compose view */
+            if (dchat_data.config_loaded) {
+                dchat_view = DCHAT_VIEW_COMPOSE;
+                memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
+                dchat_input_pos = 0;
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            }
+        } break;
+        case B: {
+            /* Close Discord Chat popup */
+            *state_ptr = DRAW_UI;
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+        } break;
+        case UP: {
+            if (dchat_choice > 0) {
+                dchat_choice--;
+                if (dchat_choice < dchat_scroll_offset) {
+                    dchat_scroll_offset = dchat_choice;
+                }
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            }
+        } break;
+        case DOWN: {
+            if (dchat_data.data_valid && dchat_choice < dchat_data.message_count - 1) {
+                dchat_choice++;
+                int max_visible = 8;
+                if (dchat_choice >= dchat_scroll_offset + max_visible) {
+                    dchat_scroll_offset = dchat_choice - max_visible + 1;
+                }
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            }
+        } break;
+        default:
+            break;
+    }
+}
+
+void
+draw_discord_chat_op(void) { /* Opaque pass - nothing to draw */ }
+
+void
+draw_discord_chat_tr(void) {
+    z_set_cond(205.0f);
+
+    /* Check if we need to fetch data */
+    if (dchat_needs_fetch && dchat_shown_loading) {
+        dchat_needs_fetch = false;
+
+#ifdef _arch_dreamcast
+        int result = dchat_fetch_messages(&dchat_data, 5000);
+        if (result == 0) {
+            dchat_data_fetched = true;
+            dchat_last_fetch_ms = timer_ms_gettime64();
+            /* Auto-scroll to newest message */
+            if (dchat_data.message_count > 8) {
+                dchat_scroll_offset = dchat_data.message_count - 8;
+                dchat_choice = dchat_data.message_count - 1;
+            }
+        }
+#endif
+        dchat_is_loading = false;
+    }
+
+    /* Auto-refresh while popup is open */
+#ifdef _arch_dreamcast
+    if (dchat_data.data_valid && !dchat_is_loading && dchat_last_fetch_ms > 0 &&
+        dchat_view == DCHAT_VIEW_MESSAGES) {
+        uint64_t now = timer_ms_gettime64();
+        if ((now - dchat_last_fetch_ms) >= DCHAT_AUTO_REFRESH_MS) {
+            dchat_data_t temp;
+            memcpy(&temp, &dchat_data, sizeof(dchat_data_t));
+            int result = dchat_fetch_messages(&temp, 5000);
+            if (result == 0) {
+                memcpy(&dchat_data, &temp, sizeof(dchat_data_t));
+            }
+            dchat_last_fetch_ms = timer_ms_gettime64();
+        }
+    }
+#endif
+
+    /* Drawing - use bitmap font for Scroll/Folders mode, BMF for others */
+    const int line_height = 20;
+    const int title_gap = line_height;
+    const int padding = 16;
+    const int max_visible_msgs = 8;
+
+    /* Calculate popup dimensions */
+    int max_line_len = 35;  /* Title length */
+
+    if (dchat_data.data_valid) {
+        for (int i = 0; i < dchat_data.message_count; i++) {
+            /* username: content */
+            int len = strlen(dchat_data.messages[i].username) + 2 + strlen(dchat_data.messages[i].content);
+            if (len > max_line_len) max_line_len = len;
+        }
+    }
+    /* Clamp max width */
+    if (max_line_len > 70) max_line_len = 70;
+
+    const int width = (max_line_len * 8) + padding;
+
+    int num_lines = 2;  /* Title + status line */
+    if (dchat_view == DCHAT_VIEW_COMPOSE) {
+        num_lines += 6;  /* Input box + instructions */
+    } else if (dchat_data.data_valid) {
+        num_lines += (dchat_data.message_count < max_visible_msgs ?
+                     dchat_data.message_count : max_visible_msgs);
+        if (dchat_data.message_count > max_visible_msgs) {
+            num_lines += 1;  /* Scroll indicator */
+        }
+        num_lines += 3;  /* Separator + instructions */
+    } else {
+        num_lines += 3;  /* Error + separator + instructions */
+    }
+
+    const int height = (int)((num_lines * line_height + title_gap) * 1.5);
+    const int x = (640 / 2) - (width / 2);
+    const int y = (480 / 2) - (height / 2);
+    const int x_item = x + (padding / 2);
+
+    /* Draw popup background */
+    draw_popup_menu(x, y, width, height);
+
+    /* Purple accent border for Discord */
+    const int accent_offset = 3;
+    draw_draw_quad(x - accent_offset, y - accent_offset, width + (2 * accent_offset), 2, 0xFF7289DA);
+    draw_draw_quad(x - accent_offset, y + height + accent_offset - 2, width + (2 * accent_offset), 2, 0xFF7289DA);
+    draw_draw_quad(x - accent_offset, y - accent_offset, 2, height + (2 * accent_offset), 0xFF7289DA);
+    draw_draw_quad(x + width + accent_offset - 2, y - accent_offset, 2, height + (2 * accent_offset), 0xFF7289DA);
+
+    /* Discord-themed corner accents */
+    draw_draw_quad(x - 6, y - 6, 8, 8, 0xFF7289DA);
+    draw_draw_quad(x + width - 2, y - 6, 8, 8, 0xFF7289DA);
+    draw_draw_quad(x - 6, y + height - 2, 8, 8, 0xFF7289DA);
+    draw_draw_quad(x + width - 2, y + height - 2, 8, 8, 0xFF7289DA);
+
+    int cur_y = y + 2;
+    font_bmp_begin_draw();
+
+    /* Title */
+    const char *title;
+    if (dchat_view == DCHAT_VIEW_COMPOSE) {
+        title = "Discord Chat - Compose Message";
+    } else {
+        title = "Discord Chat";
+    }
+    int title_x = x + (width / 2) - ((strlen(title) * 8) / 2);
+    font_bmp_set_color(0xFF7289DA);  /* Discord blurple */
+    font_bmp_draw_main(title_x, cur_y, title);
+    cur_y += title_gap;
+
+    if (dchat_view == DCHAT_VIEW_COMPOSE) {
+        /* Compose view */
+        font_bmp_set_color(0xFF88CCFF);
+        font_bmp_draw_main(x_item, cur_y, "Type your message (keyboard):");
+        cur_y += line_height;
+
+        /* Input box background */
+        draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, line_height * 2 + 4, 0xFF1A1A2E);
+        draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, 2, 0xFF7289DA);  /* Top border */
+
+        /* Show input text with cursor */
+        char display_buf[DCHAT_INPUT_BUF_LEN + 2];
+        snprintf(display_buf, sizeof(display_buf), "%s_", dchat_input_buf);
+        font_bmp_set_color(0xFFFFFFFF);
+        font_bmp_draw_main(x_item, cur_y, display_buf);
+        cur_y += line_height * 2;
+
+        /* Character count */
+        char count_buf[32];
+        snprintf(count_buf, sizeof(count_buf), "%d/%d", dchat_input_pos, DCHAT_INPUT_BUF_LEN - 1);
+        font_bmp_set_color(0xFF888888);
+        font_bmp_draw_main(x_item, cur_y, count_buf);
+        cur_y += line_height + 4;
+
+        /* Separator */
+        draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+        cur_y += 6;
+
+        /* Instructions */
+        if (dchat_sending) {
+            font_bmp_set_color(0xFFFFCC00);
+            font_bmp_draw_main(x_item, cur_y, "Sending...");
+        } else {
+            font_bmp_set_color(0xFF888888);
+            font_bmp_draw_main(x_item, cur_y, "A/Enter=Send  Y=Backspace  X=Space  B=Cancel");
+        }
+        cur_y += line_height;
+
+    } else if (dchat_is_loading) {
+        font_bmp_set_color(text_color);
+        font_bmp_draw_main(x_item, cur_y, "Loading messages...");
+        dchat_shown_loading = true;
+        cur_y += line_height;
+
+    } else if (dchat_data.data_valid) {
+        /* Channel info line */
+        char channel_info[64];
+        snprintf(channel_info, sizeof(channel_info), "%d messages", dchat_data.message_count);
+        font_bmp_set_color(0xFF88CCFF);
+        font_bmp_draw_main(x_item, cur_y, channel_info);
+        cur_y += line_height + 4;
+
+        if (dchat_data.message_count == 0) {
+            font_bmp_set_color(text_color);
+            font_bmp_draw_main(x_item, cur_y, "No messages in channel");
+            cur_y += line_height;
+        } else {
+            /* Message list with scrolling */
+            int visible = (dchat_data.message_count < max_visible_msgs) ?
+                         dchat_data.message_count : max_visible_msgs;
+
+            for (int i = 0; i < visible; i++) {
+                int msg_idx = dchat_scroll_offset + i;
+                if (msg_idx >= dchat_data.message_count) break;
+
+                dchat_message_t *msg = &dchat_data.messages[msg_idx];
+
+                /* Highlight selected message */
+                bool selected = (msg_idx == dchat_choice);
+
+                /* Draw username in Discord blurple */
+                font_bmp_set_color(selected ? 0xFFFF8800 : 0xFF7289DA);
+                int uname_width = strlen(msg->username) * 8;
+                font_bmp_draw_main(x_item, cur_y, msg->username);
+
+                /* Draw separator */
+                font_bmp_set_color(0xFF666666);
+                font_bmp_draw_main(x_item + uname_width, cur_y, ": ");
+
+                /* Draw message content - truncate if too long */
+                int content_max_chars = (width - padding - uname_width - 16) / 8;
+                char content_display[80];
+                if ((int)strlen(msg->content) > content_max_chars && content_max_chars > 3) {
+                    strncpy(content_display, msg->content, content_max_chars - 3);
+                    content_display[content_max_chars - 3] = '\0';
+                    strcat(content_display, "...");
+                } else {
+                    strncpy(content_display, msg->content, sizeof(content_display) - 1);
+                    content_display[sizeof(content_display) - 1] = '\0';
+                }
+
+                font_bmp_set_color(selected ? 0xFFFFCC00 : text_color);
+                font_bmp_draw_main(x_item + uname_width + 16, cur_y, content_display);
+
+                cur_y += line_height;
+            }
+
+            /* Scroll indicator */
+            if (dchat_data.message_count > max_visible_msgs) {
+                char scroll_info[32];
+                snprintf(scroll_info, sizeof(scroll_info), "(%d/%d)",
+                         dchat_choice + 1, dchat_data.message_count);
+                font_bmp_set_color(0xFFBBBBBB);
+                font_bmp_draw_main(x_item, cur_y, scroll_info);
+                cur_y += line_height;
+            }
+        }
+
+        /* Separator */
+        cur_y += 4;
+        draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+        cur_y += 6;
+
+        /* Instructions with colored button labels */
+        font_bmp_set_color(0xFF888888);
+        font_bmp_draw_main(x_item, cur_y, "A=Fetch  X=Refresh  Y=Compose  B=Close");
+        cur_y += line_height;
+
+    } else {
+        /* Error / not connected state */
+        font_bmp_set_color(0xFFFF6666);
+        font_bmp_draw_main(x_item, cur_y, dchat_data.error_message);
+        cur_y += line_height;
+
+        /* Separator */
+        cur_y += 4;
+        draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+        cur_y += 6;
+
+        /* Instructions */
+        font_bmp_set_color(0xFF888888);
+        font_bmp_draw_main(x_item, cur_y, "A=Connect  B=Close");
+        cur_y += line_height;
+    }
 }
