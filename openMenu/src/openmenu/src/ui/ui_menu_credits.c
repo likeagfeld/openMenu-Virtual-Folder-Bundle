@@ -1890,6 +1890,9 @@ static bool dcnow_needs_fetch = false;  /* Flag to trigger fetch on next frame *
 static bool dcnow_shown_loading = false;  /* Track if we've displayed loading screen */
 static bool dcnow_net_initialized = false;
 static char connection_status[128] = "";
+static bool dcnow_is_connecting = false;     /* Connection in progress */
+static bool dcnow_needs_connect = false;     /* Trigger connection on next frame */
+static bool dcnow_shown_connecting = false;  /* Shown connecting message */
 static int* dcnow_navigate_timeout = NULL;  /* Pointer to navigate timeout for input debouncing */
 
 /* Timestamp (ms) of the last successful fetch — 0 until first fetch completes */
@@ -2081,28 +2084,13 @@ handle_input_dcnow(enum control input) {
         case A: {
             /* A button: Connect / Fetch data / Drill down into game */
             if (!dcnow_net_initialized) {
-                /* Connect to DreamPi */
-                printf("DC Now: Starting connection...\n");
-                dcnow_set_status_callback(dcnow_connection_status_callback);
-                int net_result = dcnow_net_early_init();
-                dcnow_set_status_callback(NULL);
-
-                if (net_result < 0) {
-                    printf("DC Now: Connection failed: %d\n", net_result);
-                    memset(&dcnow_data, 0, sizeof(dcnow_data));
-                    snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
-                            "Connection failed (error %d). Press A to retry", net_result);
-                    dcnow_data.data_valid = false;
-                    /* Don't set dcnow_net_initialized = true on failure! */
-                    /* User needs to be able to retry connection */
-                } else {
-                    printf("DC Now: Connection successful\n");
-                    dcnow_net_initialized = true;
-                    memset(&dcnow_data, 0, sizeof(dcnow_data));
-                    snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
-                            "Connected! Press X to fetch data");
-                    dcnow_data.data_valid = false;
-                }
+                /* Request connection (deferred like refresh) */
+                printf("DC Now: Requesting connection...\n");
+                dcnow_is_connecting = true;
+                dcnow_needs_connect = true;
+                dcnow_shown_connecting = false;
+                strncpy(connection_status, "Connecting...", sizeof(connection_status) - 1);
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
             } else if (!dcnow_data.data_valid) {
                 /* Fetch initial data */
                 printf("DC Now: Requesting initial fetch...\n");
@@ -2284,6 +2272,32 @@ draw_dcnow_tr(void) {
         dcnow_is_loading = false;
     }
 
+    /* Execute deferred connection (after showing connecting message) */
+    if (dcnow_needs_connect && dcnow_shown_connecting) {
+        dcnow_needs_connect = false;
+        printf("DC Now: Executing connection...\n");
+
+        int net_result = dcnow_net_early_init();  /* No callback - blocks with simple message showing */
+
+        if (net_result < 0) {
+            printf("DC Now: Connection failed: %d\n", net_result);
+            memset(&dcnow_data, 0, sizeof(dcnow_data));
+            snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
+                    "Connection failed (error %d). Press A to retry", net_result);
+            dcnow_data.data_valid = false;
+        } else {
+            printf("DC Now: Connection successful\n");
+            dcnow_net_initialized = true;
+            memset(&dcnow_data, 0, sizeof(dcnow_data));
+            snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
+                    "Connected! Press X to fetch data");
+            dcnow_data.data_valid = false;
+        }
+
+        dcnow_is_connecting = false;
+        connection_status[0] = '\0';
+    }
+
     /* Auto-refresh every 60 seconds while the popup is open with valid data */
     if (dcnow_net_initialized && dcnow_data.data_valid && !dcnow_is_loading && dcnow_last_fetch_ms > 0) {
         uint64_t now = timer_ms_gettime64();
@@ -2415,7 +2429,13 @@ draw_dcnow_tr(void) {
 
         cur_y += title_gap;
 
-        if (dcnow_is_loading) {
+        if (dcnow_is_connecting) {
+            /* Show connection progress message */
+            font_bmp_set_color(0xFFFFAA00);  /* Orange */
+            font_bmp_draw_main(x_item, cur_y, connection_status);
+            dcnow_shown_connecting = true;
+            cur_y += line_height;
+        } else if (dcnow_is_loading) {
             /* Show loading message */
             font_bmp_set_color(text_color);
             font_bmp_draw_main(x_item, cur_y, "Refreshing... Please Wait");
@@ -2775,7 +2795,12 @@ draw_dcnow_tr(void) {
         }
         cur_y += title_gap;
 
-        if (dcnow_is_loading) {
+        if (dcnow_is_connecting) {
+            /* Show connection progress message */
+            cur_y += line_height;
+            font_bmf_draw(x_item, cur_y, 0xFFFFAA00, connection_status);  /* Orange */
+            dcnow_shown_connecting = true;
+        } else if (dcnow_is_loading) {
             cur_y += line_height;
             font_bmf_draw(x_item, cur_y, text_color, "Refreshing... Please Wait");
             dcnow_shown_loading = true;  /* Mark that we've shown the loading screen */
