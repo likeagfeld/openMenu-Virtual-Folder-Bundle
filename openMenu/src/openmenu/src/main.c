@@ -269,7 +269,9 @@ processInput(void) {
     if (kbd) {
         /* Keyboard found - copy list of pressed key scancodes from cond.keys */
         kbd_state = (kbd_state_t*)maple_dev_status(kbd);
-        _input.kbd_modifiers = kbd_state->shift_keys;
+        /* Use raw cond.modifiers (active-low from hardware), flip to active-high.
+           shift_keys (int) can be unreliable when truncated to uint8_t. */
+        _input.kbd_modifiers = ~(kbd_state->cond.modifiers);
         for (int i = 0; i < INPT_MAX_KEYBOARD_KEYS; i++) {
             _input.kbd_buttons[i] = kbd_state->cond.keys[i];
         }

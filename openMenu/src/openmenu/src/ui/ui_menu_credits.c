@@ -1053,7 +1053,7 @@ draw_menu_tr(void) {
     if (sf_ui[0] == UI_SCROLL || sf_ui[0] == UI_FOLDERS) {
         /* Menu size and placement */
         const int line_height = 24;
-        const int width = 320;
+        const int width = 400;
         /* Calculate visible options for height.
          * Extra rows after options: Save/Apply/Credits, spacing, GDEMU version, Build version = 4 rows
          * The +4 in the height formula accounts for these rows */
@@ -1086,7 +1086,7 @@ draw_menu_tr(void) {
         font_bmp_begin_draw();
         font_bmp_set_color(menu_title_color);
 
-        font_bmp_draw_main(width - (8 * 8 / 2), cur_y, "Settings");
+        font_bmp_draw_main(640 / 2 - (8 * 8 / 2), cur_y, "Settings");
 
         cur_y += line_height / 2;
         for (int i = 0; i < MENU_CHOICES; i++) {
@@ -1168,15 +1168,15 @@ draw_menu_tr(void) {
         cur_y += line_height;
         /* Save, Apply, DC NOW!, Discord, Credits across the bottom */
         font_bmp_set_color(save_color);
-        font_bmp_draw_main(640 / 2 - (8 * 22), cur_y, save_choice_text[0]);
+        font_bmp_draw_main(x + 12, cur_y, save_choice_text[0]);
         font_bmp_set_color(apply_color);
-        font_bmp_draw_main(640 / 2 - (8 * 12), cur_y, save_choice_text[1]);
+        font_bmp_draw_main(x + width / 5, cur_y, save_choice_text[1]);
         font_bmp_set_color(dcnow_color);
-        font_bmp_draw_main(640 / 2 - (8 * 4), cur_y, "DC NOW!");
+        font_bmp_draw_main(x + 2 * width / 5, cur_y, "DC NOW!");
         font_bmp_set_color(discord_color);
-        font_bmp_draw_main(640 / 2 + (8 * 5), cur_y, "Discord");
+        font_bmp_draw_main(x + 3 * width / 5, cur_y, "Discord");
         font_bmp_set_color(credits_color);
-        font_bmp_draw_main(640 / 2 + (8 * 14), cur_y, credits_text[0]);
+        font_bmp_draw_main(x + 4 * width / 5 - 8, cur_y, credits_text[0]);
 
         /* Add empty line for spacing */
         cur_y += line_height;
@@ -1207,7 +1207,7 @@ draw_menu_tr(void) {
     } else {
         /* Menu size and placement (many options not shown in LineDesc/Grid3) */
         const int line_height = 32;
-        const int width = 400;
+        const int width = 460;
         /* Exclude: BEEP, SCROLL_ART, SCROLL_INDEX, DISC_DETAILS, FOLDERS_ART, FOLDERS_ITEM_DETAILS, MARQUEE_SPEED, CLOCK, MULTIDISC_GROUPING (9 items, -1 for padding) */
         int visible_options = MENU_OPTIONS - 8;
         /* Dynamically hide VM2_SEND_ALL when no VM2 devices detected */
@@ -1218,7 +1218,7 @@ draw_menu_tr(void) {
         const int x = (640 / 2) - (width / 2);
         const int y = (480 / 2) - (height / 2); /* Vertically centered */
         const int x_item = x + 4;
-        const int x_choice = 344 + 24 + 20 + 25; /* magic :( */
+        const int x_choice = 344 + 24 + 20 + 25 + 30; /* magic :( - adjusted for wider popup */
 
         /* Draw a popup in the middle of the screen */
         draw_popup_menu(x, y, width, height);
@@ -1300,11 +1300,11 @@ draw_menu_tr(void) {
         uint32_t discord_color = ((current_choice == CHOICE_DISCORD_CHAT) ? highlight_color : text_color);
         uint32_t credits_color = ((current_choice == CHOICE_CREDITS) ? highlight_color : text_color);
         cur_y += line_height;
-        font_bmf_draw_centered(640 / 2 - (width / 2) + 30, cur_y, save_color, save_choice_text[0]);
-        font_bmf_draw_centered(640 / 2 - (width / 4), cur_y, apply_color, save_choice_text[1]);
+        font_bmf_draw_centered(640 / 2 - (width / 2) + 50, cur_y, save_color, save_choice_text[0]);
+        font_bmf_draw_centered(640 / 2 - (width / 5), cur_y, apply_color, save_choice_text[1]);
         font_bmf_draw_centered(640 / 2, cur_y, dcnow_color, "DC NOW!");
-        font_bmf_draw_centered(640 / 2 + (width / 4), cur_y, discord_color, "Discord");
-        font_bmf_draw_centered(640 / 2 + (width / 2) - 30, cur_y, credits_color, credits_text[0]);
+        font_bmf_draw_centered(640 / 2 + (width / 5), cur_y, discord_color, "Discord");
+        font_bmf_draw_centered(640 / 2 + (width / 2) - 50, cur_y, credits_color, credits_text[0]);
 
         /* Add empty line for spacing */
         cur_y += line_height;
@@ -4292,8 +4292,8 @@ static void dchat_connection_status_cb(const char* message) {
 /* Keyboard scancode to ASCII mapping for Dreamcast keyboard.
  * Only handles basic printable ASCII for chat messages. */
 static char dchat_scancode_to_char(uint8_t scancode, uint8_t modifiers) {
-    /* KBD_MOD_LSHIFT=0x01, KBD_MOD_RSHIFT=0x02 */
-    int shift = (modifiers & 0x03) != 0;
+    /* KBD_MOD_LSHIFT=(1<<1)=0x02, KBD_MOD_RSHIFT=(1<<5)=0x20 */
+    int shift = (modifiers & 0x22) != 0;
 
     /* Letters a-z (scancodes 0x04-0x1D) */
     if (scancode >= 0x04 && scancode <= 0x1D) {
