@@ -65,12 +65,12 @@ typedef struct {
  * Discross session and data state
  */
 typedef struct {
-    /* Connection config (from DISCROSS.CFG) */
+    /* Connection config (set from VMU save via dchat_set_config) */
     char host[DCHAT_MAX_HOST_LEN];
     int  port;
     char username[DCHAT_MAX_CRED_LEN];
     char password[DCHAT_MAX_CRED_LEN];
-    bool config_loaded;
+    bool config_valid;  /* true if host+username+password are set */
 
     /* Session state */
     char session_id[DCHAT_MAX_SESSION_LEN];
@@ -99,18 +99,25 @@ typedef struct {
 } dchat_data_t;
 
 /**
- * Load Discross config from /cd/DISCROSS.CFG on the SD card.
+ * Initialize Discross state (zero all fields).
+ * Call this once before using the dchat_data_t.
  *
- * Config file format (plain text, one per line):
- *   HOST=discross.net
- *   PORT=4000
- *   USERNAME=myuser
- *   PASSWORD=mypass
- *
- * @param data  Pointer to dchat_data_t to fill with config
- * @return 0 on success, negative on error
+ * @param data  Pointer to dchat_data_t to initialize
  */
-int dchat_init(dchat_data_t *data);
+void dchat_init(dchat_data_t *data);
+
+/**
+ * Set Discross connection config from stored credentials (VMU save).
+ * Call this after dchat_init() with values from sf_discross_* settings.
+ *
+ * @param data      Session data to configure
+ * @param host      Discross server hostname (e.g., "discross.net")
+ * @param port      Server port (0 = use default 4000)
+ * @param username  Login username
+ * @param password  Login password
+ */
+void dchat_set_config(dchat_data_t *data, const char *host, int port,
+                      const char *username, const char *password);
 
 /**
  * Login to the Discross server.

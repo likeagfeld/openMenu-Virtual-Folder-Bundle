@@ -209,60 +209,42 @@ static void strip_html_tags(char *str) {
  * Public API
  * ======================================================================== */
 
-int dchat_init(dchat_data_t *data) {
-    if (!data) return -1;
+void dchat_init(dchat_data_t *data) {
+    if (!data) return;
     memset(data, 0, sizeof(dchat_data_t));
-
-    /* Defaults */
-    strcpy(data->host, "discross.net");
     data->port = DCHAT_DEFAULT_PORT;
+}
 
-    /* Load config from /cd/DISCROSS.CFG */
-    FILE *cfg = fopen("/cd/DISCROSS.CFG", "r");
-    if (!cfg) {
-        printf("Discross: No /cd/DISCROSS.CFG found\n");
-        data->config_loaded = false;
-        return -1;
+void dchat_set_config(dchat_data_t *data, const char *host, int port,
+                      const char *username, const char *password) {
+    if (!data) return;
+
+    if (host && host[0]) {
+        strncpy(data->host, host, DCHAT_MAX_HOST_LEN - 1);
+        data->host[DCHAT_MAX_HOST_LEN - 1] = '\0';
+    } else {
+        strcpy(data->host, "discross.net");
     }
 
-    char line[256];
-    while (fgets(line, sizeof(line), cfg)) {
-        /* Trim trailing whitespace */
-        int len = strlen(line);
-        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r' || line[len - 1] == ' ')) {
-            line[--len] = '\0';
-        }
+    data->port = (port > 0) ? port : DCHAT_DEFAULT_PORT;
 
-        if (strncmp(line, "HOST=", 5) == 0) {
-            strncpy(data->host, line + 5, DCHAT_MAX_HOST_LEN - 1);
-            printf("Discross: Host = %s\n", data->host);
-        } else if (strncmp(line, "PORT=", 5) == 0) {
-            data->port = atoi(line + 5);
-            if (data->port <= 0) data->port = DCHAT_DEFAULT_PORT;
-            printf("Discross: Port = %d\n", data->port);
-        } else if (strncmp(line, "USERNAME=", 9) == 0) {
-            strncpy(data->username, line + 9, DCHAT_MAX_CRED_LEN - 1);
-            printf("Discross: Username = %s\n", data->username);
-        } else if (strncmp(line, "PASSWORD=", 9) == 0) {
-            strncpy(data->password, line + 9, DCHAT_MAX_CRED_LEN - 1);
-            printf("Discross: Password loaded\n");
-        }
+    if (username) {
+        strncpy(data->username, username, DCHAT_MAX_CRED_LEN - 1);
+        data->username[DCHAT_MAX_CRED_LEN - 1] = '\0';
     }
-    fclose(cfg);
-
-    if (data->username[0] != '\0' && data->password[0] != '\0') {
-        data->config_loaded = true;
-        printf("Discross: Config loaded OK\n");
-        return 0;
+    if (password) {
+        strncpy(data->password, password, DCHAT_MAX_CRED_LEN - 1);
+        data->password[DCHAT_MAX_CRED_LEN - 1] = '\0';
     }
 
-    printf("Discross: Config incomplete (need USERNAME and PASSWORD)\n");
-    data->config_loaded = false;
-    return -2;
+    data->config_valid = (data->host[0] && data->username[0] && data->password[0]);
+
+    printf("Discross: Config set - host=%s port=%d user=%s valid=%d\n",
+           data->host, data->port, data->username, data->config_valid);
 }
 
 int dchat_login(dchat_data_t *data, uint32_t timeout_ms) {
-    if (!data || !data->config_loaded) return -1;
+    if (!data || !data->config_valid) return -1;
 
 #ifdef _arch_dreamcast
     int sock = dchat_connect(data->host, data->port);

@@ -4202,10 +4202,16 @@ dcnow_background_tick(void) {
  * Discross Chat Integration
  * Allows Dreamcast users to read and send messages in Discord channels
  * via Discross (https://discross.net) - a plain HTTP Discord relay.
- * Flow: Login -> Server list -> Channel list -> Messages -> Compose
+ * Flow: Connect -> Credentials -> Login -> Servers -> Channels -> Messages
+ * Session persists in background when popup is closed.
+ * Shares network connection with DC Now.
  * ========================================================================== */
 
 typedef enum {
+    DCHAT_VIEW_CONNECT,        /* Serial/Modem network selection */
+    DCHAT_VIEW_ENTER_HOST,     /* Enter Discross server hostname */
+    DCHAT_VIEW_ENTER_USER,     /* Enter username */
+    DCHAT_VIEW_ENTER_PASS,     /* Enter password */
     DCHAT_VIEW_LOGIN,          /* Logging in to Discross */
     DCHAT_VIEW_SERVERS,        /* Selecting a server/guild */
     DCHAT_VIEW_CHANNELS,       /* Selecting a channel */
@@ -4214,7 +4220,8 @@ typedef enum {
 } dchat_view_t;
 
 static dchat_data_t dchat_data;
-static dchat_view_t dchat_view = DCHAT_VIEW_LOGIN;
+static dchat_view_t dchat_view = DCHAT_VIEW_CONNECT;
+static dchat_view_t dchat_last_view = DCHAT_VIEW_CONNECT; /* Remembered view for reopen */
 static int dchat_choice = 0;
 static int dchat_scroll_offset = 0;
 static bool dchat_is_loading = false;
@@ -4222,7 +4229,9 @@ static bool dchat_needs_login = false;
 static bool dchat_needs_fetch = false;
 static bool dchat_shown_loading = false;
 static bool dchat_initialized = false;
+static int dchat_conn_choice = 0;  /* 0=Serial, 1=Modem */
 static int* dchat_navigate_timeout = NULL;
+static char dchat_connection_status_msg[128] = "";
 
 /* Track what kind of fetch is pending */
 typedef enum {
@@ -4233,15 +4242,51 @@ typedef enum {
 } dchat_fetch_type_t;
 static dchat_fetch_type_t dchat_pending_fetch = DCHAT_FETCH_NONE;
 
-/* Text input buffer for composing messages */
+/* Text input buffer for composing messages AND credential entry */
 static char dchat_input_buf[DCHAT_INPUT_BUF_LEN];
 static int dchat_input_pos = 0;
 static bool dchat_sending = false;
+
+/* Credential entry buffers (separate from message compose) */
+static char dchat_cred_host[SF_DISCROSS_HOST_LEN];
+static char dchat_cred_user[SF_DISCROSS_CRED_LEN];
+static char dchat_cred_pass[SF_DISCROSS_CRED_LEN];
 
 /* Auto-refresh interval (30 seconds for chat) */
 #define DCHAT_AUTO_REFRESH_MS   30000
 #define DCHAT_INPUT_TIMEOUT_INITIAL (10)
 static uint64_t dchat_last_fetch_ms = 0;
+
+/* Helper: load credentials from VMU save into dchat_data */
+static void dchat_load_saved_creds(void) {
+    int port = sf_discross_port[0] > 0 ? (int)sf_discross_port[0] * 100 : 0;
+    dchat_set_config(&dchat_data, sf_discross_host, port,
+                     sf_discross_username, sf_discross_password);
+    /* Also populate credential entry buffers for editing */
+    strncpy(dchat_cred_host, sf_discross_host, SF_DISCROSS_HOST_LEN - 1);
+    strncpy(dchat_cred_user, sf_discross_username, SF_DISCROSS_CRED_LEN - 1);
+    strncpy(dchat_cred_pass, sf_discross_password, SF_DISCROSS_CRED_LEN - 1);
+}
+
+/* Helper: save credentials to VMU save settings (does NOT write to VMU yet -
+ * that happens when user does Save in settings menu) */
+static void dchat_save_creds_to_settings(void) {
+    strncpy(sf_discross_host, dchat_cred_host, SF_DISCROSS_HOST_LEN - 1);
+    sf_discross_host[SF_DISCROSS_HOST_LEN - 1] = '\0';
+    strncpy(sf_discross_username, dchat_cred_user, SF_DISCROSS_CRED_LEN - 1);
+    sf_discross_username[SF_DISCROSS_CRED_LEN - 1] = '\0';
+    strncpy(sf_discross_password, dchat_cred_pass, SF_DISCROSS_CRED_LEN - 1);
+    sf_discross_password[SF_DISCROSS_CRED_LEN - 1] = '\0';
+    /* Port stored as port/100 in a uint8 (e.g., 4000 -> 40) */
+    sf_discross_port[0] = (uint8_t)(dchat_data.port / 100);
+}
+
+/* DC Now connection status callback for visual feedback */
+static void dchat_connection_status_cb(const char* message) {
+    if (message) {
+        strncpy(dchat_connection_status_msg, message, sizeof(dchat_connection_status_msg) - 1);
+    }
+}
 
 /* Keyboard scancode to ASCII mapping for Dreamcast keyboard.
  * Only handles basic printable ASCII for chat messages. */
@@ -4296,38 +4341,97 @@ discord_chat_setup(enum draw_state* state, struct theme_color* _colors, int* tim
 
     *state = DRAW_DISCORD_CHAT;
 
-    /* Initialize Discross config if not done yet */
+    /* First-time initialization */
     if (!dchat_initialized) {
-        memset(&dchat_data, 0, sizeof(dchat_data));
         dchat_init(&dchat_data);
+        dchat_load_saved_creds();
         dchat_initialized = true;
     }
 
-    if (!dchat_data.config_loaded) {
-        strcpy(dchat_data.error_message, "No DISCROSS.CFG - place config on SD card");
-        dchat_view = DCHAT_VIEW_LOGIN;
-    } else if (!dchat_network_available()) {
-        strcpy(dchat_data.error_message, "No network - connect via DC Now first");
-        dchat_view = DCHAT_VIEW_LOGIN;
-    } else if (dchat_data.logged_in && dchat_data.server_count > 0) {
-        /* Already logged in with servers - go to server list */
-        dchat_view = DCHAT_VIEW_SERVERS;
-    } else if (dchat_data.logged_in) {
-        /* Logged in but no server list yet - fetch servers */
-        dchat_view = DCHAT_VIEW_SERVERS;
-        dchat_is_loading = true;
-        dchat_needs_fetch = true;
-        dchat_shown_loading = false;
-        dchat_pending_fetch = DCHAT_FETCH_SERVERS;
-    } else {
-        /* Not logged in yet - start login */
-        dchat_view = DCHAT_VIEW_LOGIN;
-        if (dchat_data.config_loaded && dchat_network_available()) {
-            /* Auto-login */
-            dchat_needs_login = true;
+    /* Determine which view to show based on current state.
+     * Session persists across open/close, so resume where we left off. */
+    if (dchat_data.logged_in) {
+        /* Already logged in - resume at last meaningful view */
+        if (dchat_data.messages_valid && dchat_data.current_channel_id[0]) {
+            dchat_view = DCHAT_VIEW_MESSAGES;
+        } else if (dchat_data.channel_count > 0) {
+            dchat_view = DCHAT_VIEW_CHANNELS;
+        } else if (dchat_data.server_count > 0) {
+            dchat_view = DCHAT_VIEW_SERVERS;
+        } else {
+            /* Logged in but no server list yet */
+            dchat_view = DCHAT_VIEW_SERVERS;
             dchat_is_loading = true;
+            dchat_needs_fetch = true;
             dchat_shown_loading = false;
+            dchat_pending_fetch = DCHAT_FETCH_SERVERS;
         }
+    } else if (!dchat_network_available()) {
+        /* No network - show connection selection (Serial/Modem) */
+        dchat_view = DCHAT_VIEW_CONNECT;
+        dchat_conn_choice = 0;
+        dchat_connection_status_msg[0] = '\0';
+    } else if (!dchat_data.config_valid) {
+        /* Network available but no credentials - enter host first */
+        dchat_view = DCHAT_VIEW_ENTER_HOST;
+        strncpy(dchat_input_buf, dchat_cred_host, DCHAT_INPUT_BUF_LEN - 1);
+        dchat_input_pos = strlen(dchat_input_buf);
+    } else {
+        /* Have network + credentials, auto-login */
+        dchat_view = DCHAT_VIEW_LOGIN;
+        dchat_needs_login = true;
+        dchat_is_loading = true;
+        dchat_shown_loading = false;
+    }
+}
+
+/* Helper: process keyboard input into dchat_input_buf.
+ * Used by both credential entry and message compose views.
+ * max_len limits the buffer length for the current field. */
+static void dchat_process_keyboard_input(int max_len) {
+    if (INPT_KeyboardNone()) return;
+    for (int k = 0; k < INPT_MAX_KEYBOARD_KEYS; k++) {
+        uint8_t scancode = INPT_KeyboardScancode(k);
+        if (scancode == 0) continue;
+
+        if (scancode == 0x2A) { /* Backspace */
+            if (dchat_input_pos > 0) {
+                dchat_input_pos--;
+                dchat_input_buf[dchat_input_pos] = '\0';
+            }
+            continue;
+        }
+        if (scancode == 0x28) continue; /* Enter handled by A button */
+
+        char c = dchat_scancode_to_char(scancode, INPT_KeyboardModifiers());
+        if (c && dchat_input_pos < max_len - 1) {
+            dchat_input_buf[dchat_input_pos++] = c;
+            dchat_input_buf[dchat_input_pos] = '\0';
+        }
+    }
+}
+
+/* Helper: common controller input for text entry fields (compose + credentials).
+ * Returns true if input was consumed. */
+static bool dchat_handle_text_entry_controls(enum control input, int max_len) {
+    switch (input) {
+        case Y: {
+            if (dchat_input_pos > 0) {
+                dchat_input_pos--;
+                dchat_input_buf[dchat_input_pos] = '\0';
+            }
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            return true;
+        }
+        case X: {
+            if (dchat_input_pos < max_len - 1) {
+                dchat_input_buf[dchat_input_pos++] = ' ';
+                dchat_input_buf[dchat_input_pos] = '\0';
+            }
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            return true;
+        }
+        default: return false;
     }
 }
 
@@ -4337,8 +4441,148 @@ handle_input_discord_chat(enum control input) {
         return;
     }
 
+    /* --- Connection selection view (Serial/Modem) --- */
+    if (dchat_view == DCHAT_VIEW_CONNECT) {
+        switch (input) {
+            case A: {
+                /* Connect using selected method */
+                printf("Discross: Starting connection with method %d...\n", dchat_conn_choice);
+                dchat_connection_status_msg[0] = '\0';
+                dcnow_set_status_callback(dchat_connection_status_cb);
+                int net_result = dcnow_net_init_with_method(
+                    dchat_conn_choice == 0 ? DCNOW_CONN_SERIAL : DCNOW_CONN_MODEM);
+                dcnow_set_status_callback(NULL);
+
+                if (net_result < 0) {
+                    printf("Discross: Connection failed: %d\n", net_result);
+                    snprintf(dchat_data.error_message, sizeof(dchat_data.error_message),
+                            "Connection failed (error %d)", net_result);
+                } else {
+                    printf("Discross: Network connected\n");
+                    /* Also mark DC Now as connected since we share the network */
+                    dcnow_net_initialized = true;
+                    /* Proceed to credential entry or auto-login */
+                    if (dchat_data.config_valid) {
+                        dchat_view = DCHAT_VIEW_LOGIN;
+                        dchat_needs_login = true;
+                        dchat_is_loading = true;
+                        dchat_shown_loading = false;
+                    } else {
+                        dchat_view = DCHAT_VIEW_ENTER_HOST;
+                        if (dchat_cred_host[0]) {
+                            strncpy(dchat_input_buf, dchat_cred_host, DCHAT_INPUT_BUF_LEN - 1);
+                        } else {
+                            strcpy(dchat_input_buf, "discross.net");
+                        }
+                        dchat_input_pos = strlen(dchat_input_buf);
+                    }
+                }
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            case UP: case DOWN: {
+                dchat_conn_choice = dchat_conn_choice ? 0 : 1;
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            case B: {
+                *state_ptr = DRAW_UI;
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            default: break;
+        }
+        return;
+    }
+
+    /* --- Credential entry: Host --- */
+    if (dchat_view == DCHAT_VIEW_ENTER_HOST) {
+        dchat_process_keyboard_input(SF_DISCROSS_HOST_LEN);
+        if (dchat_handle_text_entry_controls(input, SF_DISCROSS_HOST_LEN)) return;
+        switch (input) {
+            case A: {
+                if (dchat_input_pos > 0) {
+                    strncpy(dchat_cred_host, dchat_input_buf, SF_DISCROSS_HOST_LEN - 1);
+                    dchat_cred_host[SF_DISCROSS_HOST_LEN - 1] = '\0';
+                    /* Move to username entry */
+                    dchat_view = DCHAT_VIEW_ENTER_USER;
+                    strncpy(dchat_input_buf, dchat_cred_user, DCHAT_INPUT_BUF_LEN - 1);
+                    dchat_input_pos = strlen(dchat_input_buf);
+                }
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            case B: {
+                *state_ptr = DRAW_UI;
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            default: break;
+        }
+        return;
+    }
+
+    /* --- Credential entry: Username --- */
+    if (dchat_view == DCHAT_VIEW_ENTER_USER) {
+        dchat_process_keyboard_input(SF_DISCROSS_CRED_LEN);
+        if (dchat_handle_text_entry_controls(input, SF_DISCROSS_CRED_LEN)) return;
+        switch (input) {
+            case A: {
+                if (dchat_input_pos > 0) {
+                    strncpy(dchat_cred_user, dchat_input_buf, SF_DISCROSS_CRED_LEN - 1);
+                    dchat_cred_user[SF_DISCROSS_CRED_LEN - 1] = '\0';
+                    /* Move to password entry */
+                    dchat_view = DCHAT_VIEW_ENTER_PASS;
+                    strncpy(dchat_input_buf, dchat_cred_pass, DCHAT_INPUT_BUF_LEN - 1);
+                    dchat_input_pos = strlen(dchat_input_buf);
+                }
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            case B: {
+                /* Back to host entry */
+                dchat_view = DCHAT_VIEW_ENTER_HOST;
+                strncpy(dchat_input_buf, dchat_cred_host, DCHAT_INPUT_BUF_LEN - 1);
+                dchat_input_pos = strlen(dchat_input_buf);
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            default: break;
+        }
+        return;
+    }
+
+    /* --- Credential entry: Password --- */
+    if (dchat_view == DCHAT_VIEW_ENTER_PASS) {
+        dchat_process_keyboard_input(SF_DISCROSS_CRED_LEN);
+        if (dchat_handle_text_entry_controls(input, SF_DISCROSS_CRED_LEN)) return;
+        switch (input) {
+            case A: {
+                if (dchat_input_pos > 0) {
+                    strncpy(dchat_cred_pass, dchat_input_buf, SF_DISCROSS_CRED_LEN - 1);
+                    dchat_cred_pass[SF_DISCROSS_CRED_LEN - 1] = '\0';
+                    /* Apply credentials and save to settings */
+                    dchat_set_config(&dchat_data, dchat_cred_host, DCHAT_DEFAULT_PORT,
+                                     dchat_cred_user, dchat_cred_pass);
+                    dchat_save_creds_to_settings();
+                    /* Auto-login */
+                    dchat_view = DCHAT_VIEW_LOGIN;
+                    dchat_needs_login = true;
+                    dchat_is_loading = true;
+                    dchat_shown_loading = false;
+                }
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            case B: {
+                /* Back to username entry */
+                dchat_view = DCHAT_VIEW_ENTER_USER;
+                strncpy(dchat_input_buf, dchat_cred_user, DCHAT_INPUT_BUF_LEN - 1);
+                dchat_input_pos = strlen(dchat_input_buf);
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            default: break;
+        }
+        return;
+    }
+
     /* --- Compose view: keyboard text input --- */
     if (dchat_view == DCHAT_VIEW_COMPOSE) {
+        dchat_process_keyboard_input(DCHAT_INPUT_BUF_LEN);
+        if (dchat_handle_text_entry_controls(input, DCHAT_INPUT_BUF_LEN)) return;
+
         switch (input) {
             case B: {
                 dchat_view = DCHAT_VIEW_MESSAGES;
@@ -4354,7 +4598,6 @@ handle_input_discord_chat(enum control input) {
                     if (result == 0) {
                         memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
                         dchat_input_pos = 0;
-                        /* Refresh messages */
                         dchat_needs_fetch = true;
                         dchat_shown_loading = false;
                         dchat_is_loading = true;
@@ -4370,66 +4613,34 @@ handle_input_discord_chat(enum control input) {
                 }
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
-            case Y: {
-                if (dchat_input_pos > 0) {
-                    dchat_input_pos--;
-                    dchat_input_buf[dchat_input_pos] = '\0';
-                }
-                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
-            } break;
-            case X: {
-                if (dchat_input_pos < DCHAT_INPUT_BUF_LEN - 1) {
-                    dchat_input_buf[dchat_input_pos++] = ' ';
-                    dchat_input_buf[dchat_input_pos] = '\0';
-                }
-                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
-            } break;
             default: break;
         }
 
-        /* Keyboard text input */
+        /* Also handle Enter key for sending */
         if (!INPT_KeyboardNone()) {
             for (int k = 0; k < INPT_MAX_KEYBOARD_KEYS; k++) {
                 uint8_t scancode = INPT_KeyboardScancode(k);
-                if (scancode == 0) continue;
-
-                if (scancode == 0x2A) { /* Backspace */
-                    if (dchat_input_pos > 0) {
-                        dchat_input_pos--;
-                        dchat_input_buf[dchat_input_pos] = '\0';
-                    }
-                    continue;
-                }
-
-                if (scancode == 0x28) { /* Enter - send */
-                    if (dchat_input_pos > 0 && !dchat_sending) {
-                        dchat_sending = true;
+                if (scancode == 0x28 && dchat_input_pos > 0 && !dchat_sending) {
+                    dchat_sending = true;
 #ifdef _arch_dreamcast
-                        int result = dchat_send_message(&dchat_data,
-                            dchat_data.current_channel_id, dchat_input_buf, 5000);
-                        if (result == 0) {
-                            memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
-                            dchat_input_pos = 0;
-                            dchat_needs_fetch = true;
-                            dchat_shown_loading = false;
-                            dchat_is_loading = true;
-                            dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
-                            dchat_view = DCHAT_VIEW_MESSAGES;
-                        }
-#else
+                    int result = dchat_send_message(&dchat_data,
+                        dchat_data.current_channel_id, dchat_input_buf, 5000);
+                    if (result == 0) {
                         memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
                         dchat_input_pos = 0;
+                        dchat_needs_fetch = true;
+                        dchat_shown_loading = false;
+                        dchat_is_loading = true;
+                        dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
                         dchat_view = DCHAT_VIEW_MESSAGES;
-#endif
-                        dchat_sending = false;
                     }
-                    continue;
-                }
-
-                char c = dchat_scancode_to_char(scancode, INPT_KeyboardModifiers());
-                if (c && dchat_input_pos < DCHAT_INPUT_BUF_LEN - 1) {
-                    dchat_input_buf[dchat_input_pos++] = c;
-                    dchat_input_buf[dchat_input_pos] = '\0';
+#else
+                    memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
+                    dchat_input_pos = 0;
+                    dchat_view = DCHAT_VIEW_MESSAGES;
+#endif
+                    dchat_sending = false;
+                    break;
                 }
             }
         }
@@ -4441,12 +4652,19 @@ handle_input_discord_chat(enum control input) {
     if (dchat_view == DCHAT_VIEW_LOGIN) {
         switch (input) {
             case A: {
-                if (dchat_data.config_loaded && dchat_network_available() && !dchat_is_loading) {
+                if (dchat_data.config_valid && dchat_network_available() && !dchat_is_loading) {
                     dchat_needs_login = true;
                     dchat_is_loading = true;
                     dchat_shown_loading = false;
                     if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
                 }
+            } break;
+            case Y: {
+                /* Re-enter credentials */
+                dchat_view = DCHAT_VIEW_ENTER_HOST;
+                strncpy(dchat_input_buf, dchat_cred_host, DCHAT_INPUT_BUF_LEN - 1);
+                dchat_input_pos = strlen(dchat_input_buf);
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
             case B: {
                 *state_ptr = DRAW_UI;
@@ -4462,7 +4680,6 @@ handle_input_discord_chat(enum control input) {
         switch (input) {
             case A: {
                 if (dchat_data.server_count > 0 && dchat_choice < dchat_data.server_count) {
-                    /* Select server, fetch its channels */
                     printf("Discross: Selected server %d: %s\n", dchat_choice,
                            dchat_data.servers[dchat_choice].name);
                     strncpy(dchat_data.current_server_id,
@@ -4478,7 +4695,6 @@ handle_input_discord_chat(enum control input) {
                 }
             } break;
             case X: {
-                /* Refresh server list */
                 dchat_is_loading = true;
                 dchat_needs_fetch = true;
                 dchat_shown_loading = false;
@@ -4517,7 +4733,6 @@ handle_input_discord_chat(enum control input) {
         switch (input) {
             case A: {
                 if (dchat_data.channel_count > 0 && dchat_choice < dchat_data.channel_count) {
-                    /* Select channel, fetch messages */
                     printf("Discross: Selected channel %d: %s\n", dchat_choice,
                            dchat_data.channels[dchat_choice].name);
                     strncpy(dchat_data.current_channel_id,
@@ -4534,7 +4749,6 @@ handle_input_discord_chat(enum control input) {
                 }
             } break;
             case X: {
-                /* Refresh channel list */
                 dchat_is_loading = true;
                 dchat_needs_fetch = true;
                 dchat_shown_loading = false;
@@ -4544,7 +4758,6 @@ handle_input_discord_chat(enum control input) {
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
             case B: {
-                /* Back to server list */
                 dchat_view = DCHAT_VIEW_SERVERS;
                 dchat_choice = 0;
                 dchat_scroll_offset = 0;
@@ -4574,11 +4787,8 @@ handle_input_discord_chat(enum control input) {
 
     /* --- Message list view --- */
     switch (input) {
-        case A: {
-            /* No action on A in message view (messages are read-only) */
-        } break;
+        case A: break;
         case X: {
-            /* Refresh messages */
             dchat_data.messages_valid = false;
             dchat_is_loading = true;
             dchat_needs_fetch = true;
@@ -4589,7 +4799,6 @@ handle_input_discord_chat(enum control input) {
             if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
         } break;
         case Y: {
-            /* Open compose view */
             if (dchat_data.logged_in && dchat_data.current_channel_id[0]) {
                 dchat_view = DCHAT_VIEW_COMPOSE;
                 memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
@@ -4598,7 +4807,6 @@ handle_input_discord_chat(enum control input) {
             }
         } break;
         case B: {
-            /* Back to channel list */
             dchat_view = DCHAT_VIEW_CHANNELS;
             dchat_choice = 0;
             dchat_scroll_offset = 0;
@@ -4723,10 +4931,15 @@ draw_discord_chat_tr(void) {
     const int max_visible = 8;
 
     /* Calculate popup dimensions based on current view */
-    int max_line_len = 38;
+    int max_line_len = 42;
     int num_lines = 2; /* Title + status/instructions */
 
-    if (dchat_view == DCHAT_VIEW_COMPOSE) {
+    if (dchat_view == DCHAT_VIEW_CONNECT) {
+        num_lines += 6;
+    } else if (dchat_view == DCHAT_VIEW_ENTER_HOST || dchat_view == DCHAT_VIEW_ENTER_USER ||
+               dchat_view == DCHAT_VIEW_ENTER_PASS) {
+        num_lines += 6;
+    } else if (dchat_view == DCHAT_VIEW_COMPOSE) {
         num_lines += 6;
     } else if (dchat_view == DCHAT_VIEW_SERVERS && dchat_data.server_count > 0) {
         int vis = dchat_data.server_count < max_visible ? dchat_data.server_count : max_visible;
@@ -4782,19 +4995,110 @@ draw_discord_chat_tr(void) {
     /* Title bar */
     const char *title;
     switch (dchat_view) {
-        case DCHAT_VIEW_LOGIN:    title = "Discross - Login"; break;
-        case DCHAT_VIEW_SERVERS:  title = "Discross - Servers"; break;
-        case DCHAT_VIEW_CHANNELS: title = "Discross - Channels"; break;
-        case DCHAT_VIEW_COMPOSE:  title = "Discross - Compose"; break;
-        default:                  title = "Discross - Chat"; break;
+        case DCHAT_VIEW_CONNECT:    title = "Discross - Connect"; break;
+        case DCHAT_VIEW_ENTER_HOST: title = "Discross - Server Address"; break;
+        case DCHAT_VIEW_ENTER_USER: title = "Discross - Username"; break;
+        case DCHAT_VIEW_ENTER_PASS: title = "Discross - Password"; break;
+        case DCHAT_VIEW_LOGIN:      title = "Discross - Login"; break;
+        case DCHAT_VIEW_SERVERS:    title = "Discross - Servers"; break;
+        case DCHAT_VIEW_CHANNELS:   title = "Discross - Channels"; break;
+        case DCHAT_VIEW_COMPOSE:    title = "Discross - Compose"; break;
+        default:                    title = "Discross - Chat"; break;
     }
     int title_x = x + (width / 2) - ((strlen(title) * 8) / 2);
     font_bmp_set_color(0xFF7289DA);
     font_bmp_draw_main(title_x, cur_y, title);
     cur_y += title_gap;
 
+    /* ---- CONNECTION SELECT VIEW ---- */
+    if (dchat_view == DCHAT_VIEW_CONNECT) {
+        font_bmp_set_color(0xFF88CCFF);
+        font_bmp_draw_main(x_item, cur_y, "Select connection method:");
+        cur_y += line_height + 4;
+
+        /* Serial option */
+        font_bmp_set_color(dchat_conn_choice == 0 ? 0xFFFF8800 : text_color);
+        font_bmp_draw_main(x_item, cur_y, dchat_conn_choice == 0 ? "> Serial (Coder's Cable)" : "  Serial (Coder's Cable)");
+        cur_y += line_height;
+
+        /* Modem option */
+        font_bmp_set_color(dchat_conn_choice == 1 ? 0xFFFF8800 : text_color);
+        font_bmp_draw_main(x_item, cur_y, dchat_conn_choice == 1 ? "> Modem (DreamPi)" : "  Modem (DreamPi)");
+        cur_y += line_height;
+
+        /* Status message if any */
+        if (dchat_connection_status_msg[0]) {
+            cur_y += 2;
+            font_bmp_set_color(0xFFFFCC00);
+            font_bmp_draw_main(x_item, cur_y, dchat_connection_status_msg);
+            cur_y += line_height;
+        }
+
+        if (dchat_data.error_message[0]) {
+            font_bmp_set_color(0xFFFF6666);
+            font_bmp_draw_main(x_item, cur_y, dchat_data.error_message);
+            cur_y += line_height;
+        }
+
+        cur_y += 4;
+        draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+        cur_y += 6;
+        font_bmp_set_color(0xFF888888);
+        font_bmp_draw_main(x_item, cur_y, "A=Connect  B=Close");
+        cur_y += line_height;
+
+    /* ---- CREDENTIAL ENTRY VIEWS ---- */
+    } else if (dchat_view == DCHAT_VIEW_ENTER_HOST ||
+               dchat_view == DCHAT_VIEW_ENTER_USER ||
+               dchat_view == DCHAT_VIEW_ENTER_PASS) {
+        const char *label;
+        int step;
+        if (dchat_view == DCHAT_VIEW_ENTER_HOST) { label = "Enter Discross server address:"; step = 1; }
+        else if (dchat_view == DCHAT_VIEW_ENTER_USER) { label = "Enter your username:"; step = 2; }
+        else { label = "Enter your password:"; step = 3; }
+
+        /* Step indicator */
+        char step_buf[32];
+        snprintf(step_buf, sizeof(step_buf), "Step %d of 3", step);
+        font_bmp_set_color(0xFF888888);
+        font_bmp_draw_main(x_item, cur_y, step_buf);
+        cur_y += line_height;
+
+        font_bmp_set_color(0xFF88CCFF);
+        font_bmp_draw_main(x_item, cur_y, label);
+        cur_y += line_height;
+
+        /* Input box */
+        draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, line_height + 4, 0xFF1A1A2E);
+        draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, 2, 0xFF7289DA);
+
+        if (dchat_view == DCHAT_VIEW_ENTER_PASS && dchat_input_pos > 0) {
+            /* Show password as asterisks */
+            char masked[DCHAT_INPUT_BUF_LEN + 2];
+            int i;
+            for (i = 0; i < dchat_input_pos && i < DCHAT_INPUT_BUF_LEN - 2; i++)
+                masked[i] = '*';
+            masked[i] = '_';
+            masked[i + 1] = '\0';
+            font_bmp_set_color(0xFFFFFFFF);
+            font_bmp_draw_main(x_item, cur_y, masked);
+        } else {
+            char display_buf[DCHAT_INPUT_BUF_LEN + 2];
+            snprintf(display_buf, sizeof(display_buf), "%s_", dchat_input_buf);
+            font_bmp_set_color(0xFFFFFFFF);
+            font_bmp_draw_main(x_item, cur_y, display_buf);
+        }
+        cur_y += line_height + 4;
+
+        cur_y += 4;
+        draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+        cur_y += 6;
+        font_bmp_set_color(0xFF888888);
+        font_bmp_draw_main(x_item, cur_y, "A=Next  Y=Bksp  X=Space  B=Back");
+        cur_y += line_height;
+
     /* ---- LOGIN VIEW ---- */
-    if (dchat_view == DCHAT_VIEW_LOGIN) {
+    } else if (dchat_view == DCHAT_VIEW_LOGIN) {
         if (dchat_is_loading) {
             font_bmp_set_color(text_color);
             font_bmp_draw_main(x_item, cur_y, "Logging in to Discross...");
@@ -4808,7 +5112,7 @@ draw_discord_chat_tr(void) {
             draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
             cur_y += 6;
             font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A=Retry  B=Close");
+            font_bmp_draw_main(x_item, cur_y, "A=Retry  Y=Edit Creds  B=Close");
             cur_y += line_height;
         } else {
             font_bmp_set_color(text_color);
@@ -4818,7 +5122,7 @@ draw_discord_chat_tr(void) {
             draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
             cur_y += 6;
             font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A=Login  B=Close");
+            font_bmp_draw_main(x_item, cur_y, "A=Login  Y=Edit Creds  B=Close");
             cur_y += line_height;
         }
 

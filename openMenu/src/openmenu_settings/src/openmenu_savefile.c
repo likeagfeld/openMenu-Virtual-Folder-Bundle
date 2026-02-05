@@ -5,6 +5,7 @@
 #endif
 
 #include <stdbool.h>
+#include <string.h>
 #include <crayon_savefile/savefile.h>
 
 #include "openmenu_savefile.h"
@@ -60,6 +61,10 @@ savefile_defaults() {
     sf_vm2_send_all[0] = VM2_SEND_ALL;
     sf_boot_mode[0] = BOOT_MODE_FULL;
     sf_dcnow_vmu[0] = DCNOW_VMU_ON;
+    memset(sf_discross_host, 0, SF_DISCROSS_HOST_LEN);
+    memset(sf_discross_username, 0, SF_DISCROSS_CRED_LEN);
+    memset(sf_discross_password, 0, SF_DISCROSS_CRED_LEN);
+    sf_discross_port[0] = 0;  /* 0 = use default port 4000 */
 }
 
 //THIS IS USED BY THE CRAYON SAVEFILE DESERIALISER WHEN LOADING A SAVE FROM AN OLDER VERSION
@@ -107,6 +112,12 @@ update_savefile(void** loaded_variables, crayon_savefile_version_t loaded_versio
     }
     if (loaded_version < SFV_DCNOW_VMU) {
         sf_dcnow_vmu[0] = DCNOW_VMU_ON;
+    }
+    if (loaded_version < SFV_DISCROSS_CREDS) {
+        memset(sf_discross_host, 0, SF_DISCROSS_HOST_LEN);
+        memset(sf_discross_username, 0, SF_DISCROSS_CRED_LEN);
+        memset(sf_discross_password, 0, SF_DISCROSS_CRED_LEN);
+        sf_discross_port[0] = 0;
     }
     return 0;
 }
@@ -179,6 +190,14 @@ setup_savefile(crayon_savefile_details_t* details) {
                                  VAR_STILL_PRESENT);
     crayon_savefile_add_variable(details, &sf_dcnow_vmu, sf_dcnow_vmu_type, sf_dcnow_vmu_length, SFV_DCNOW_VMU,
                                  VAR_STILL_PRESENT);
+    crayon_savefile_add_variable(details, &sf_discross_host, sf_discross_host_type, sf_discross_host_length,
+                                 SFV_DISCROSS_CREDS, VAR_STILL_PRESENT);
+    crayon_savefile_add_variable(details, &sf_discross_username, sf_discross_username_type, sf_discross_username_length,
+                                 SFV_DISCROSS_CREDS, VAR_STILL_PRESENT);
+    crayon_savefile_add_variable(details, &sf_discross_password, sf_discross_password_type, sf_discross_password_length,
+                                 SFV_DISCROSS_CREDS, VAR_STILL_PRESENT);
+    crayon_savefile_add_variable(details, &sf_discross_port, sf_discross_port_type, sf_discross_port_length,
+                                 SFV_DISCROSS_CREDS, VAR_STILL_PRESENT);
 
     if (crayon_savefile_solidify(details)) {
         return 1;

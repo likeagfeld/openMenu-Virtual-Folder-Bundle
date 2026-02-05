@@ -87,6 +87,26 @@ extern uint8_t* sf_dcnow_vmu;
 #define sf_dcnow_vmu_type   CRAYON_TYPE_UINT8
 #define sf_dcnow_vmu_length 1
 
+/* Discross chat credentials (stored in VMU save) */
+#define SF_DISCROSS_HOST_LEN     48
+#define SF_DISCROSS_CRED_LEN     48
+
+extern char* sf_discross_host;
+#define sf_discross_host_type   CRAYON_TYPE_CHAR
+#define sf_discross_host_length SF_DISCROSS_HOST_LEN
+
+extern char* sf_discross_username;
+#define sf_discross_username_type   CRAYON_TYPE_CHAR
+#define sf_discross_username_length SF_DISCROSS_CRED_LEN
+
+extern char* sf_discross_password;
+#define sf_discross_password_type   CRAYON_TYPE_CHAR
+#define sf_discross_password_length SF_DISCROSS_CRED_LEN
+
+extern uint8_t* sf_discross_port;
+#define sf_discross_port_type   CRAYON_TYPE_UINT8
+#define sf_discross_port_length 1
+
 enum savefile_version {
     SFV_INITIAL = 1,
     SFV_BIOS_3D,
@@ -101,6 +121,7 @@ enum savefile_version {
     SFV_VM2_SEND_ALL,
     SFV_BOOT_MODE,
     SFV_DCNOW_VMU,
+    SFV_DISCROSS_CREDS,
     SFV_LATEST_PLUS_ONE //DON'T REMOVE
 };
 

@@ -21,6 +21,10 @@ uint8_t* sf_clock;
 uint8_t* sf_vm2_send_all;
 uint8_t* sf_boot_mode;
 uint8_t* sf_dcnow_vmu;
+char* sf_discross_host;
+char* sf_discross_username;
+char* sf_discross_password;
+uint8_t* sf_discross_port;
 
 void
 settings_sanitize() {
@@ -111,4 +115,12 @@ settings_sanitize() {
     if ((sf_dcnow_vmu[0] < DCNOW_VMU_START) || (sf_dcnow_vmu[0] > DCNOW_VMU_END)) {
         sf_dcnow_vmu[0] = DCNOW_VMU_ON;
     }
+
+    /* Discross port: 0 means use default (40 = 4000/100, stored as uint8) */
+    /* No range check needed - any uint8 value is valid */
+
+    /* Ensure null-terminated strings */
+    sf_discross_host[SF_DISCROSS_HOST_LEN - 1] = '\0';
+    sf_discross_username[SF_DISCROSS_CRED_LEN - 1] = '\0';
+    sf_discross_password[SF_DISCROSS_CRED_LEN - 1] = '\0';
 }
