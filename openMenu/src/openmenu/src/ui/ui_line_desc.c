@@ -23,6 +23,7 @@
 #include "ui/font_prototypes.h"
 #include "ui/ui_common.h"
 #include "ui/ui_menu_credits.h"
+#include "ui/dc/input.h"
 
 #include "ui/ui_line_desc.h"
 
@@ -409,7 +410,7 @@ menu_increment(int amount) {
 
 static void
 menu_cb(void) {
-    if (list_len <= 0) {
+    if ((navigate_timeout > 0) || (list_len <= 0)) {
         return;
     }
 
@@ -445,7 +446,7 @@ run_cb(void) {
 
 static void
 menu_accept(void) {
-    if (list_len <= 0) {
+    if ((navigate_timeout > 0) || (list_len <= 0)) {
         return;
     }
 
@@ -469,7 +470,7 @@ menu_accept(void) {
         frames_focused = 0;
         draw_current = DRAW_UI;
 
-        navigate_timeout = 3;
+        navigate_timeout = INPUT_TIMEOUT * 2;
         menu_changed_item();
         return;
     }
@@ -506,6 +507,9 @@ menu_accept(void) {
 
 static void
 menu_settings(void) {
+    if (navigate_timeout > 0) {
+        return;
+    }
 
     draw_current = DRAW_MENU;
     menu_setup(&draw_current, &region_themes[region_current].colors, &navigate_timeout, region_themes[region_current].colors.menu_highlight_color);
@@ -535,6 +539,9 @@ update_data(void) {
 
 static void
 menu_exit(void) {
+    if (navigate_timeout > 0) {
+        return;
+    }
 
     set_cur_game_item(list_current[current_selected_item]);
     draw_current = DRAW_EXIT;
@@ -618,6 +625,18 @@ FUNCTION(UI_NAME, init) {
 
 static void
 handle_input_ui(enum control input) {
+    /* Check for L+R triggers pressed together to open DC Now popup */
+    if (input == TRIG_L && INPT_TriggerPressed(TRIGGER_R)) {
+        /* Both triggers pressed - open DC Now popup */
+        dcnow_setup(&draw_current, current_theme_colors, &navigate_timeout, current_theme_colors->menu_highlight_color);
+        return;
+    }
+    if (input == TRIG_R && INPT_TriggerPressed(TRIGGER_L)) {
+        /* Both triggers pressed - open DC Now popup */
+        dcnow_setup(&draw_current, current_theme_colors, &navigate_timeout, current_theme_colors->menu_highlight_color);
+        return;
+    }
+
     switch (input) {
         case LEFT: menu_decrement(1); break;
         case RIGHT: menu_increment(1); break;
@@ -644,7 +663,7 @@ FUNCTION(UI_NAME, setup) {
     frames_focused = 0;
     draw_current = DRAW_UI;
 
-    navigate_timeout = 3;
+    navigate_timeout = INPUT_TIMEOUT * 2;
     menu_changed_item();
 }
 
@@ -674,6 +693,9 @@ FUNCTION_INPUT(UI_NAME, handle_input) {
         } break;
         case DRAW_SAVELOAD: {
             handle_input_saveload(input_current);
+        } break;
+        case DRAW_DCNOW_PLAYERS: {
+            handle_input_dcnow(input_current);
         } break;
         default:
         case DRAW_UI: {
@@ -715,6 +737,10 @@ FUNCTION(UI_NAME, drawOP) {
         case DRAW_SAVELOAD: {
             /* Save/Load popup on top */
             draw_saveload_op();
+        } break;
+        case DRAW_DCNOW_PLAYERS: {
+            /* DC Now popup on top */
+            draw_dcnow_op();
         } break;
         default:
         case DRAW_UI: {
@@ -759,6 +785,10 @@ FUNCTION(UI_NAME, drawTR) {
         case DRAW_SAVELOAD: {
             /* Save/Load popup on top */
             draw_saveload_tr();
+        } break;
+        case DRAW_DCNOW_PLAYERS: {
+            /* DC Now popup on top */
+            draw_dcnow_tr();
         } break;
         default:
         case DRAW_UI: {

@@ -23,16 +23,18 @@
 #include "ui/draw_prototypes.h"
 #include "ui/font_prototypes.h"
 #include "ui/ui_common.h"
+#include "ui/dc/input.h"
 
 #include "ui/ui_menu_credits.h"
 
+/* Include dcnow_vmu.h early for VMU setting changes */
+#include "../dcnow/dcnow_vmu.h"
+
 /* External declaration for VM2/VMUPro/USB4Maple detection */
 #include <dc/maple.h>
-#include <crayon_savefile/peripheral.h>
 #include "vm2/vm2_api.h"
 extern int vm2_device_count;
 extern void vm2_rescan(void);
-extern void vm2_send_id_to_all(const char* product, const char* name);
 
 #pragma region Exit_Menu
 
@@ -44,11 +46,6 @@ static const char* exit_option_text[] = {
     "Exit to BIOS",
     "Close"
 };
-
-static const char* exit_info_text =
-    "Region and VGA patching is not automatically applied when "
-    "launching games from the BIOS. Select \"Disc Image Options\" "
-    "in GD MENU Card Manager to patch instead.";
 
 static int exit_menu_choice = 0;
 static int exit_menu_num_options = 0;
@@ -97,67 +94,6 @@ exit_menu_build_options(int is_folder, int has_vm2, int is_game) {
     }
 }
 
-static int
-count_wrap_lines(const char* text, int max_chars) {
-    if (max_chars <= 0) return 0;
-    int lines = 0;
-    int line_len = 0;
-    int last_space_offset = -1;
-    int i = 0;
-
-    while (text[i]) {
-        if (text[i] == ' ') {
-            last_space_offset = i;
-        }
-        line_len++;
-        if (line_len > max_chars) {
-            lines++;
-            if (last_space_offset >= 0 && last_space_offset >= (i - line_len + 1)) {
-                i = last_space_offset + 1;
-            }
-            line_len = 0;
-            last_space_offset = -1;
-            continue;
-        }
-        i++;
-    }
-    if (line_len > 0) lines++;
-    return lines;
-}
-
-static void
-draw_wrap_text_bmp(const char* text, int x, int y, int max_chars, int line_height) {
-    char line_buf[128];
-    int line_len = 0;
-    int line_start = 0;
-    int last_space = -1;
-    int i = 0;
-
-    while (text[i]) {
-        if (text[i] == ' ') last_space = i;
-        line_len++;
-        if (line_len > max_chars) {
-            int break_at = (last_space > line_start) ? last_space : i;
-            int len = break_at - line_start;
-            strncpy(line_buf, &text[line_start], len);
-            line_buf[len] = '\0';
-            font_bmp_draw_main(x, y, line_buf);
-            y += line_height;
-            line_start = break_at + ((text[break_at] == ' ') ? 1 : 0);
-            i = line_start;
-            line_len = 0;
-            last_space = -1;
-            continue;
-        }
-        i++;
-    }
-    if (line_len > 0) {
-        strncpy(line_buf, &text[line_start], line_len);
-        line_buf[line_len] = '\0';
-        font_bmp_draw_main(x, y, line_buf);
-    }
-}
-
 #pragma endregion Exit_Menu
 
 #pragma region CodeBreaker_Menu
@@ -180,7 +116,7 @@ typedef enum CB_OPTION {
 
 #pragma region Settings_Menu
 
-static const char* menu_choice_text[] = {"Style", "Theme", "Aspect", "Beep", "Exit to 3D BIOS", "Sort", "Filter", "Multi-Disc", "Multi-Disc Grouping", "Artwork", "Display Index Numbers", "Disc Details", "Artwork", "Item Details", "Clock", "Marquee Speed", "VMU Game ID", "Boot Mode"};
+static const char* menu_choice_text[] = {"Style", "Theme", "Aspect", "Beep", "Exit to 3D BIOS", "Sort", "Filter", "Multi-Disc", "Multi-Disc Grouping", "Artwork", "Display Index Numbers", "Disc Details", "Artwork", "Item Details", "Clock", "Marquee Speed", "VMU Game ID", "Boot Mode", "DC NOW! VMU"};
 static const char* theme_choice_text[] = {"LineDesc", "Grid3", "Scroll", "Folders"};
 static const char* region_choice_text[] = {"NTSC-U", "NTSC-J", "PAL"};
 static const char* region_choice_text_scroll[] = {"GDMENU"};
@@ -205,6 +141,7 @@ static const char* marquee_speed_choice_text[] = {"Slow", "Medium", "Fast"};
 static const char* clock_choice_text[] = {"On (12-Hour)", "On (24-Hour)", "Off"};
 static const char* vm2_send_all_choice_text[] = {"Send to All", "Send to First", "Off"};
 static const char* boot_mode_choice_text[] = {"Full Boot", "License Only", "Animation Only", "Fast Boot"};
+static const char* dcnow_vmu_choice_text[] = {"On", "Off"};
 static const char* save_choice_text[] = {"Save/Load", "Apply"};
 static const char* credits_text[] = {"Credits"};
 
@@ -237,6 +174,7 @@ static int REGION_CHOICES = (sizeof(region_choice_text) / sizeof(region_choice_t
 #define CLOCK_CHOICES (sizeof(clock_choice_text) / sizeof(clock_choice_text)[0])
 #define VM2_SEND_ALL_CHOICES (sizeof(vm2_send_all_choice_text) / sizeof(vm2_send_all_choice_text)[0])
 #define BOOT_MODE_CHOICES (sizeof(boot_mode_choice_text) / sizeof(boot_mode_choice_text)[0])
+#define DCNOW_VMU_CHOICES (sizeof(dcnow_vmu_choice_text) / sizeof(dcnow_vmu_choice_text)[0])
 
 typedef enum MENU_CHOICE {
     CHOICE_START,
@@ -258,7 +196,9 @@ typedef enum MENU_CHOICE {
     CHOICE_MARQUEE_SPEED,
     CHOICE_VM2_SEND_ALL,
     CHOICE_BOOT_MODE,
+    CHOICE_DCNOW_VMU,
     CHOICE_SAVE,
+    CHOICE_DCNOW,
     CHOICE_CREDITS,
     CHOICE_END = CHOICE_CREDITS
 } MENU_CHOICE;
@@ -268,13 +208,13 @@ typedef enum MENU_CHOICE {
 static int choices[MENU_CHOICES + 1];
 static int choices_max[MENU_CHOICES + 1] = {
     THEME_CHOICES,     3, ASPECT_CHOICES, BEEP_CHOICES, BIOS_3D_CHOICES, SORT_CHOICES, FILTER_CHOICES,
-    MULTIDISC_CHOICES, MULTIDISC_GROUPING_CHOICES, SCROLL_ART_CHOICES, SCROLL_INDEX_CHOICES, DISC_DETAILS_CHOICES, FOLDERS_ART_CHOICES, FOLDERS_ITEM_DETAILS_CHOICES, CLOCK_CHOICES, MARQUEE_SPEED_CHOICES, VM2_SEND_ALL_CHOICES, BOOT_MODE_CHOICES, 2 /* Apply/Save */};
+    MULTIDISC_CHOICES, MULTIDISC_GROUPING_CHOICES, SCROLL_ART_CHOICES, SCROLL_INDEX_CHOICES, DISC_DETAILS_CHOICES, FOLDERS_ART_CHOICES, FOLDERS_ITEM_DETAILS_CHOICES, CLOCK_CHOICES, MARQUEE_SPEED_CHOICES, VM2_SEND_ALL_CHOICES, BOOT_MODE_CHOICES, DCNOW_VMU_CHOICES, 2 /* Apply/Save */};
 static const char** menu_choice_array[MENU_CHOICES] = {theme_choice_text,       region_choice_text,   aspect_choice_text,
                                                        beep_choice_text,        bios_3d_choice_text,  sort_choice_text,
                                                        filter_choice_text,      multidisc_choice_text, multidisc_grouping_choice_text,
                                                        scroll_art_choice_text,  scroll_index_choice_text, disc_details_choice_text,
                                                        folders_art_choice_text, folders_item_details_choice_text, clock_choice_text, marquee_speed_choice_text, vm2_send_all_choice_text,
-                                                       boot_mode_choice_text};
+                                                       boot_mode_choice_text, dcnow_vmu_choice_text};
 static int current_choice = CHOICE_START;
 static int* input_timeout_ptr = NULL;
 
@@ -307,14 +247,12 @@ static const int num_credits = sizeof(credits) / sizeof(credit_pair);
 #pragma endregion Credits_Menu
 
 static enum draw_state* state_ptr = NULL;
+static theme_color* stored_colors = NULL;
 static uint32_t text_color;
 static uint32_t highlight_color;
 static uint32_t menu_bkg_color;
 static uint32_t menu_bkg_border_color;
 static uint32_t menu_title_color;
-
-/* Forward declaration for Save/Load window initialization */
-static void saveload_init_state(void);
 
 /* Build version string (compiled in from VERSION.TXT at build time) */
 #ifndef OPENMENU_BUILD_VERSION
@@ -341,8 +279,9 @@ common_setup(enum draw_state* state, theme_color* _colors, int* timeout_ptr) {
 
     /* So we can modify the shared state and input timeout */
     state_ptr = state;
+    stored_colors = _colors;
     input_timeout_ptr = timeout_ptr;
-    *input_timeout_ptr = 3;
+    *input_timeout_ptr = (30 * 1) /* half a second */;
 }
 
 void
@@ -375,6 +314,7 @@ menu_setup(enum draw_state* state, theme_color* _colors, int* timeout_ptr, uint3
     choices[CHOICE_CLOCK] = sf_clock[0];
     choices[CHOICE_VM2_SEND_ALL] = sf_vm2_send_all[0];
     choices[CHOICE_BOOT_MODE] = sf_boot_mode[0];
+    choices[CHOICE_DCNOW_VMU] = sf_dcnow_vmu[0];
 
     if (choices[CHOICE_THEME] != UI_SCROLL && choices[CHOICE_THEME] != UI_FOLDERS) {
         menu_choice_array[CHOICE_REGION] = region_choice_text;
@@ -454,28 +394,28 @@ exit_menu_setup(enum draw_state* state, theme_color* _colors, int* timeout_ptr, 
 
 static void
 menu_leave(void) {
+    if (*input_timeout_ptr > 0) {
+        return;
+    }
     *state_ptr = DRAW_UI;
-    *input_timeout_ptr = 3;
+    *input_timeout_ptr = (30 * 1) /* half a second */;
 }
 
 static void
 credits_leave(void) {
+    if (*input_timeout_ptr > 0) {
+        return;
+    }
     *state_ptr = DRAW_MENU;
-    *input_timeout_ptr = 3;
+    *input_timeout_ptr = (20);
 }
 
 static void
 menu_accept(void) {
+    if (*input_timeout_ptr > 0) {
+        return;
+    }
     if (current_choice == CHOICE_SAVE) {
-        if (choices[CHOICE_SAVE] == 0 /* Save/Load */) {
-            /* Open Save/Load window instead of saving directly */
-            saveload_init_state();
-            *state_ptr = DRAW_SAVELOAD;
-            *input_timeout_ptr = 3;
-            return;
-        }
-
-        /* Apply only (no save) - apply settings and reload UI */
         /* update Global Settings */
         sf_ui[0] = choices[CHOICE_THEME];
         sf_region[0] = choices[CHOICE_REGION];
@@ -495,6 +435,18 @@ menu_accept(void) {
         sf_clock[0] = choices[CHOICE_CLOCK];
         sf_vm2_send_all[0] = choices[CHOICE_VM2_SEND_ALL];
         sf_boot_mode[0] = choices[CHOICE_BOOT_MODE];
+        sf_dcnow_vmu[0] = choices[CHOICE_DCNOW_VMU];
+
+        /* Immediately apply DC Now VMU setting change */
+        if (sf_dcnow_vmu[0] == DCNOW_VMU_OFF) {
+            /* Setting turned OFF - restore OpenMenu logo if DC Now display is active */
+            if (dcnow_vmu_is_active()) {
+                dcnow_vmu_restore_logo();
+            }
+        }
+        /* When turned ON, the VMU will be updated next time dcnow_vmu_update_display is called
+         * (e.g., when opening DC Now popup or on next data refresh) */
+
         if (choices[CHOICE_THEME] != UI_SCROLL && choices[CHOICE_THEME] != UI_FOLDERS && sf_region[0] > REGION_END) {
             sf_custom_theme[0] = THEME_ON;
             int num_default_themes = 0;
@@ -522,12 +474,19 @@ menu_accept(void) {
             list_set_genre_sort((FLAGS_GENRE)choices[CHOICE_FILTER] - 1, choices[CHOICE_SORT]);
         }
 
+        if (choices[CHOICE_SAVE] == 0 /* Save */) {
+            savefile_save();
+        }
         extern void reload_ui(void);
         reload_ui();
     }
+    if (current_choice == CHOICE_DCNOW) {
+        /* Call dcnow_setup() to initialize the DC Now popup */
+        dcnow_setup(state_ptr, stored_colors, input_timeout_ptr, menu_title_color);
+    }
     if (current_choice == CHOICE_CREDITS) {
         *state_ptr = DRAW_CREDITS;
-        *input_timeout_ptr = 3;
+        *input_timeout_ptr = (20 * 1) /* 1/3 second */;
     }
 }
 
@@ -591,6 +550,10 @@ menu_choice_prev(void) {
         }
         /* Skip BEEP option (disabled/commented out) */
         if (current_choice == CHOICE_BEEP) {
+            skip = 1;
+        }
+        /* Skip DCNOW in up/down navigation (reached via left/right from Save/Apply) */
+        if (current_choice == CHOICE_DCNOW) {
             skip = 1;
         }
         /* Skip CREDITS in up/down navigation (reached via left/right from Save/Apply) */
@@ -671,6 +634,10 @@ menu_choice_next(void) {
         if (current_choice == CHOICE_BEEP) {
             skip = 1;
         }
+        /* Skip DCNOW in up/down navigation (reached via left/right from Save/Apply) */
+        if (current_choice == CHOICE_DCNOW) {
+            skip = 1;
+        }
         /* Skip CREDITS in up/down navigation (reached via left/right from Save/Apply) */
         if (current_choice == CHOICE_CREDITS) {
             skip = 1;
@@ -735,8 +702,15 @@ menu_choice_left(void) {
     if (*input_timeout_ptr > 0) {
         return;
     }
-    /* Handle Save/Apply/Credits row navigation */
+    /* Handle Save/Apply/DC Now/Credits row navigation */
     if (current_choice == CHOICE_CREDITS) {
+        /* Move left from Credits to DC Now */
+        current_choice = CHOICE_DCNOW;
+        *input_timeout_ptr = INPUT_TIMEOUT;
+        return;
+    }
+    if (current_choice == CHOICE_DCNOW) {
+        /* Move left from DC Now to Apply */
         current_choice = CHOICE_SAVE;
         choices[CHOICE_SAVE] = 1;  /* Select Apply */
         *input_timeout_ptr = INPUT_TIMEOUT;
@@ -761,14 +735,20 @@ menu_choice_right(void) {
     if (*input_timeout_ptr > 0) {
         return;
     }
-    /* Handle Save/Apply/Credits row navigation */
+    /* Handle Save/Apply/DC Now/Credits row navigation */
     if (current_choice == CHOICE_CREDITS) {
         /* Already on Credits (rightmost), do nothing */
         return;
     }
-    if (current_choice == CHOICE_SAVE && choices[CHOICE_SAVE] == 1) {
-        /* On Apply, move right to Credits */
+    if (current_choice == CHOICE_DCNOW) {
+        /* Move right from DC Now to Credits */
         current_choice = CHOICE_CREDITS;
+        *input_timeout_ptr = INPUT_TIMEOUT;
+        return;
+    }
+    if (current_choice == CHOICE_SAVE && choices[CHOICE_SAVE] == 1) {
+        /* On Apply, move right to DC Now */
+        current_choice = CHOICE_DCNOW;
         *input_timeout_ptr = INPUT_TIMEOUT;
         return;
     }
@@ -815,6 +795,9 @@ menu_multidisc_next(void) {
 
 static void
 menu_accept_multidisc(void) {
+    if (*input_timeout_ptr > 0) {
+        return;
+    }
     const gd_item** list_multidisc = list_get_multidisc();
     int multidisc_len = list_multidisc_length();
 
@@ -857,6 +840,10 @@ menu_exit_next(void) {
 
 static void
 menu_exit_accept(void) {
+    if (*input_timeout_ptr > 0) {
+        return;
+    }
+
     EXIT_OPTION selected = exit_options[exit_menu_choice];
 
     switch (selected) {
@@ -866,10 +853,7 @@ menu_exit_accept(void) {
             break;
 
         case EXIT_OPT_EXIT_ONLY:
-            /* Exit to BIOS without mounting disc */
-            /* Send hardcoded "DCBIOS" ID to VM2 if present (honors send setting) */
-            vm2_rescan();
-            vm2_send_id_to_all("DCBIOS", NULL);
+            /* Exit to BIOS without mounting disc or sending ID */
             exit_to_bios_ex(0, 0);
             break;
 
@@ -928,6 +912,10 @@ menu_cb_next(void) {
 
 static void
 menu_cb_accept(void) {
+    if (*input_timeout_ptr > 0) {
+        return;
+    }
+
     CB_OPTION selected = (CB_OPTION)cb_menu_choice;
 
     switch (selected) {
@@ -1143,21 +1131,23 @@ draw_menu_tr(void) {
             font_bmp_draw_main(x_item, cur_y, line_buf);
         }
 
-        /* Draw Save/Apply/Credits on one line */
+        /* Draw Save/Apply/DC Now/Credits on one line */
         uint32_t save_color =
             ((current_choice == CHOICE_SAVE) && (choices[CHOICE_SAVE] == 0) ? highlight_color : text_color);
         uint32_t apply_color =
             ((current_choice == CHOICE_SAVE) && (choices[CHOICE_SAVE] == 1) ? highlight_color : text_color);
+        uint32_t dcnow_color = (current_choice == CHOICE_DCNOW ? highlight_color : text_color);
         uint32_t credits_color = (current_choice == CHOICE_CREDITS ? highlight_color : text_color);
         cur_y += line_height;
-        /* Save at left, Apply in middle, Credits at right - equal 24px spacing */
-        /* Save/Load(72px) + gap(24px) + Apply(40px) + gap(24px) + Credits(56px) = 216px total */
+        /* Save, Apply, DC NOW!, Credits across the bottom */
         font_bmp_set_color(save_color);
-        font_bmp_draw_main(640 / 2 - 108, cur_y, save_choice_text[0]);
+        font_bmp_draw_main(640 / 2 - (8 * 18), cur_y, save_choice_text[0]);
         font_bmp_set_color(apply_color);
-        font_bmp_draw_main(640 / 2 - 12, cur_y, save_choice_text[1]);
+        font_bmp_draw_main(640 / 2 - (8 * 7), cur_y, save_choice_text[1]);
+        font_bmp_set_color(dcnow_color);
+        font_bmp_draw_main(640 / 2 + (8 * 1), cur_y, "DC NOW!");
         font_bmp_set_color(credits_color);
-        font_bmp_draw_main(640 / 2 + 52, cur_y, credits_text[0]);
+        font_bmp_draw_main(640 / 2 + (8 * 11), cur_y, credits_text[0]);
 
         /* Add empty line for spacing */
         cur_y += line_height;
@@ -1195,7 +1185,7 @@ draw_menu_tr(void) {
         if (vm2_device_count == 0) {
             visible_options -= 1;
         }
-        const int height = (visible_options + 3) * line_height - line_height / 4 + line_height + line_height / 2; /* Add space for version strings and extra spacing before buttons */
+        const int height = (visible_options + 3) * line_height - line_height / 4 + line_height; /* Add space for version strings */
         const int x = (640 / 2) - (width / 2);
         const int y = (480 / 2) - (height / 2); /* Vertically centered */
         const int x_item = x + 4;
@@ -1272,21 +1262,18 @@ draw_menu_tr(void) {
             }
         }
 
-        /* Extra spacing before buttons - same as spacing after buttons to version strings */
-        cur_y += line_height + line_height / 2;
-
-        /* Draw Save/Apply/Credits on one line using smaller font */
-        /* Each button centered in its own 1/3 column of the window */
+        /* Draw Save/Apply/DC Now/Credits on one line */
         uint32_t save_color =
             ((current_choice == CHOICE_SAVE) && (choices[CHOICE_SAVE] == 0) ? highlight_color : text_color);
         uint32_t apply_color =
             ((current_choice == CHOICE_SAVE) && (choices[CHOICE_SAVE] == 1) ? highlight_color : text_color);
+        uint32_t dcnow_color = ((current_choice == CHOICE_DCNOW) ? highlight_color : text_color);
         uint32_t credits_color = ((current_choice == CHOICE_CREDITS) ? highlight_color : text_color);
-        font_bmf_set_height(20.0f);
-        font_bmf_draw_centered(x + width / 6, cur_y, save_color, save_choice_text[0]);
-        font_bmf_draw_centered(x + width / 2, cur_y, apply_color, save_choice_text[1]);
-        font_bmf_draw_centered(x + width * 5 / 6, cur_y, credits_color, credits_text[0]);
-        font_bmf_set_height_default();
+        cur_y += line_height;
+        font_bmf_draw_centered(640 / 2 - (width / 2) + 50, cur_y, save_color, save_choice_text[0]);
+        font_bmf_draw_centered(640 / 2 - (width / 6), cur_y, apply_color, save_choice_text[1]);
+        font_bmf_draw_centered(640 / 2 + (width / 6), cur_y, dcnow_color, "DC NOW!");
+        font_bmf_draw_centered(640 / 2 + (width / 2) - 50, cur_y, credits_color, credits_text[0]);
 
         /* Add empty line for spacing */
         cur_y += line_height;
@@ -1337,7 +1324,7 @@ draw_credits_tr(void) {
         draw_popup_menu(x, y, width, height);
 
         /* overlay our text on top with options */
-        int cur_y = y + 2;
+        int cur_y = y + 4;
         font_bmp_begin_draw();
         font_bmp_set_color(sf_ui[0] == UI_FOLDERS ? menu_title_color : text_color);
 
@@ -1529,13 +1516,7 @@ draw_exit_tr(void) {
         /* Width is the larger of title or max option, plus padding */
         const int content_width = max_option_len * 8;
         const int width = (content_width > title_width ? content_width : title_width) + padding;
-        int height = (exit_menu_num_options + 1) * line_height + (line_height / 2) + title_gap;
-        const int is_game_type = (cur_game_item && strcmp(cur_game_item->type, "game") == 0);
-        int num_info_lines = 0;
-        if (is_game_type) {
-            num_info_lines = count_wrap_lines(exit_info_text, max_option_len);
-            height += line_height + num_info_lines * line_height;
-        }
+        const int height = (exit_menu_num_options + 1) * line_height + (line_height / 2) + title_gap;
         const int x = (640 / 2) - (width / 2);
         const int y = (480 / 2) - (height / 2);
         const int x_item = x + (padding / 2);
@@ -1558,11 +1539,6 @@ draw_exit_tr(void) {
             }
             font_bmp_draw_main(x_item, cur_y, exit_option_text[exit_options[i]]);
         }
-        if (is_game_type) {
-            cur_y += 2 * line_height; /* blank line */
-            font_bmp_set_color(text_color);
-            draw_wrap_text_bmp(exit_info_text, x_item, cur_y, max_option_len, line_height);
-        }
     } else {
         /* LineDesc/Grid modes - dynamic menu with larger font */
         const int line_height = 32;
@@ -1582,13 +1558,7 @@ draw_exit_tr(void) {
         const int content_width = max_option_len * 10;
         const int title_width = 12 * 10;  /* "Exit to BIOS" */
         const int width = (content_width > title_width ? content_width : title_width) + padding;
-        int height = (exit_menu_num_options + 1) * line_height + (line_height / 2);
-        const int is_game_type = (cur_game_item && strcmp(cur_game_item->type, "game") == 0);
-        if (is_game_type) {
-            int info_chars_per_line = (content_width > title_width ? content_width : title_width) / 6;
-            int num_info_lines = count_wrap_lines(exit_info_text, info_chars_per_line);
-            height += line_height + num_info_lines * 20;
-        }
+        const int height = (exit_menu_num_options + 1) * line_height + (line_height / 2);
         const int x = (640 / 2) - (width / 2);
         const int y = (480 / 2) - (height / 2);
         const int x_item = x + 10;
@@ -1609,11 +1579,6 @@ draw_exit_tr(void) {
                 temp_color = highlight_color;
             }
             font_bmf_draw_auto_size(x_item, cur_y, temp_color, exit_option_text[exit_options[i]], width - 20);
-        }
-        if (is_game_type) {
-            cur_y += 2 * line_height; /* blank line */
-            font_bmf_set_height(16.0f);
-            font_bmf_draw_sub_wrap(x_item, cur_y, text_color, exit_info_text, width - 20);
         }
     }
 }
@@ -1738,6 +1703,9 @@ menu_psx_launcher_next(void) {
 
 static void
 menu_accept_psx_launcher(void) {
+    if (*input_timeout_ptr > 0) {
+        return;
+    }
     if (psx_launcher_choice == 0) {
         bleem_launch(cur_game_item);
     } else if (psx_launcher_choice == 1) {
@@ -2864,3 +2832,1254 @@ draw_saveload_tr(void) {
 }
 
 #pragma endregion SaveLoad_Menu
+
+/*
+ * DC Now (dreamcast.online/now) Player Status Popup
+ */
+#include "../dcnow/dcnow_api.h"
+#include "../dcnow/dcnow_net_init.h"
+#include "../dcnow/dcnow_vmu.h"
+#include <arch/timer.h>
+#include "../texture/txr_manager.h"
+
+extern image img_empty_boxart;  /* Defined in draw_kos.c */
+
+/* Mapping from DC Now API game codes to openMenu product IDs for box art lookup */
+typedef struct {
+    const char* api_code;
+    const char* product_id;
+} dcnow_game_mapping_t;
+
+static const dcnow_game_mapping_t game_code_map[] = {
+    {"PSO", "PSO"},              /* Phantasy Star Online */
+    {"Q3", "Q3"},                /* Quake III Arena */
+    {"CHUCHU", "CHUCHU"},        /* ChuChu Rocket! */
+    {"BROWSERS", "BROWSERS"},     /* Web Browsers */
+    {"AFO", "AFO"},              /* Alien Front Online */
+    {"4X4", "4X4"},              /* 4x4 Evolution */
+    {"DAYTONA", "DAYTONA"},      /* Daytona USA */
+    {"OUTTRIG", "OUTTRIG"},      /* Outtrigger */
+    {"STARLNCR", "STARLNCR"},    /* Starlancer */
+    {"WWP", "WWP"},              /* Worms World Party */
+    {"DRIVSTRK", "DRIVSTRK"},    /* Driving Strikers */
+    {"POWSMASH", "POWSMASH"},    /* Power Smash / Virtua Tennis */
+    {"GUNDAM", "GUNDAM"},        /* Mobile Suit Gundam */
+    {"MONACO", "MONACO"},        /* Monaco Grand Prix Online */
+    {"POD", "POD"},              /* POD SpeedZone */
+    {"SPEDEVIL", "SPEDEVIL"},    /* Speed Devils Online */
+    {"NBA2K1", "NBA2K1"},        /* NBA 2K1 */
+    {"NBA2K2", "NBA2K2"},        /* NBA 2K2 */
+    {"NFL2K1", "NFL2K1"},        /* NFL 2K1 */
+    {"NFL2K2", "NFL2K2"},        /* NFL 2K2 */
+    {"NCAA2K2", "NCAA2K2"},      /* NCAA 2K2 */
+    {"WSB2K2", "WSB2K2"},        /* World Series Baseball 2K2 */
+    {"F355", "F355"},            /* Ferrari F355 Challenge */
+    {"OOGABOOGA", "OOGABOOGA"},  /* Ooga Booga */
+    {"TOYRACER", "TOYRACER"},    /* Toy Racer */
+    {"GOLF2", "GOLF2"},          /* Golf Shiyouyo 2 */
+    {"HUNDSWORD", "HUNDSWORD"},  /* Hundred Swords */
+    {"MAXPOOL", "MAXPOOL"},      /* Maximum Pool */
+    {"PBABOWL", "PBABOWL"},      /* PBA Tour Bowling 2001 */
+    {"NEXTTET", "NEXTTET"},      /* The Next Tetris */
+    {"SEGATET", "SEGATET"},      /* Sega Tetris */
+    {"SEGASWRL", "SEGASWRL"},    /* Sega Swirl */
+    {"PLANRING", "PLANRING"},    /* Planet Ring */
+    {"IGPACK", "IGPACK"},        /* Internet Game Pack */
+    {"DEEDEE", "DEEDEE"},        /* Dee Dee Planet */
+    {"AEROFD", "AEROFD"},        /* Aero Dancing FSD */
+    {"AEROI", "AEROI"},          /* Aero Dancing i */
+    {"AEROISD", "AEROISD"},      /* Aero Dancing iSD */
+    {"FLOIGAN", "FLOIGAN"},      /* Floigan Bros Episode 1 */
+    {"SA", "SA"},                /* Sonic Adventure */
+    {"SA2", "SA2"},              /* Sonic Adventure 2 */
+    {"JSR", "JSR"},              /* Jet Grind Radio / Jet Set Radio */
+    {"SHENMUE", "SHENMUE"},      /* Shenmue Passport */
+    {"CRAZYT2", "CRAZYT2"},      /* Crazy Taxi 2 */
+    {"MSR", "MSR"},              /* Metropolis Street Racer */
+    {"SAMBA", "SAMBA"},          /* Samba de Amigo */
+    {"SF2049", "SF2049"},        /* San Francisco Rush 2049 */
+    {"SEGAGT", "SEGAGT"},        /* Sega GT */
+    {"SWR", "SWR"},              /* Star Wars Episode I Racer */
+    {"CLASSIC", "CLASSIC"},      /* ClassiCube */
+    {NULL, NULL}                 /* Terminator */
+};
+
+/* Look up product ID from API game code */
+static const char* get_product_id_from_api_code(const char* api_code) {
+    if (!api_code || api_code[0] == '\0') {
+        return NULL;
+    }
+
+    for (int i = 0; game_code_map[i].api_code != NULL; i++) {
+        if (strcmp(game_code_map[i].api_code, api_code) == 0) {
+            return game_code_map[i].product_id;
+        }
+    }
+
+    /* If not found in map, try using the API code directly */
+    return api_code;
+}
+
+typedef enum {
+    DCNOW_VIEW_GAMES,    /* Showing list of games */
+    DCNOW_VIEW_PLAYERS   /* Showing list of players for selected game */
+} dcnow_view_t;
+
+static dcnow_data_t dcnow_data;
+static dcnow_view_t dcnow_view = DCNOW_VIEW_GAMES;
+static int dcnow_choice = 0;
+static int dcnow_scroll_offset = 0;  /* Scroll offset for viewing large game lists */
+static int dcnow_selected_game = -1; /* Index of selected game for player view */
+static bool dcnow_data_fetched = false;
+static bool dcnow_is_loading = false;
+static bool dcnow_needs_fetch = false;  /* Flag to trigger fetch on next frame */
+static bool dcnow_shown_loading = false;  /* Track if we've displayed loading screen */
+static bool dcnow_net_initialized = false;
+static char connection_status[128] = "";
+static int* dcnow_navigate_timeout = NULL;  /* Pointer to navigate timeout for input debouncing */
+
+/* Timestamp (ms) of the last successful fetch — 0 until first fetch completes */
+static uint64_t dcnow_last_fetch_ms = 0;
+/* Scratch buffer for auto-refresh so old data survives a failed fetch */
+static dcnow_data_t dcnow_temp_data;
+
+#define DCNOW_INPUT_TIMEOUT_INITIAL (10)
+#define DCNOW_INPUT_TIMEOUT_REPEAT (4)
+#define DCNOW_AUTO_REFRESH_MS       60000  /* 60 seconds between auto-refreshes */
+
+/* Visual callback for network connection status - renders full scene with stunning visuals */
+static void dcnow_connection_status_callback(const char* message) {
+    /* Render a single frame with the status message */
+    pvr_wait_ready();
+    pvr_scene_begin();
+
+    /* Opaque pass - draw dark background  */
+    draw_set_list(PVR_LIST_OP_POLY);
+    pvr_list_begin(PVR_LIST_OP_POLY);
+
+    /* Full screen dark background with gradient effect */
+    draw_draw_quad(0, 0, 640, 480, 0xFF1A1A2E);
+
+    pvr_list_finish();
+
+    /* Transparent pass - draw status box and text */
+    draw_set_list(PVR_LIST_TR_POLY);
+    pvr_list_begin(PVR_LIST_TR_POLY);
+
+    /* Stunning multi-layer border effect */
+    const int border_width = 6;
+    const int box_x = 120;
+    const int box_y = 180;
+    const int box_width = 400;
+    const int box_height = 120;
+
+    /* Outer glow - cyan */
+    draw_draw_quad(box_x - border_width - 2, box_y - border_width - 2,
+                   box_width + (2 * (border_width + 2)), box_height + (2 * (border_width + 2)),
+                   0x4000DDFF);
+
+    /* Main border - bright cyan gradient effect */
+    draw_draw_quad(box_x - border_width, box_y - border_width,
+                   box_width + (2 * border_width), box_height + (2 * border_width),
+                   0xFF00DDFF);
+
+    /* Inner border accent - electric blue */
+    draw_draw_quad(box_x - (border_width / 2), box_y - (border_width / 2),
+                   box_width + border_width, box_height + border_width,
+                   0xFF0099FF);
+
+    /* Deep blue-black background with slight transparency for depth */
+    draw_draw_quad(box_x, box_y, box_width, box_height, 0xF0001133);
+
+    /* Draw text with color coding based on message content */
+    font_bmp_begin_draw();
+
+    /* Title in bright cyan */
+    font_bmp_set_color(0xFF00DDFF);
+    font_bmp_draw_main(240, 200, "Dreamcast NOW!");
+
+    /* Determine message color based on content */
+    uint32_t msg_color = 0xFFFFFFFF;  /* Default: white */
+    if (strstr(message, "Initializing") || strstr(message, "Setting")) {
+        msg_color = 0xFF00AAFF;  /* Blue for initialization */
+    } else if (strstr(message, "Dialing") || strstr(message, "Connecting")) {
+        msg_color = 0xFFFFAA00;  /* Orange for active connection */
+    } else if (strstr(message, "Connected") || strstr(message, "ready")) {
+        msg_color = 0xFF00FF66;  /* Green for success */
+    } else if (strstr(message, "failed") || strstr(message, "Failed")) {
+        msg_color = 0xFFFF3333;  /* Red for errors */
+    }
+
+    font_bmp_set_color(msg_color);
+    /* Center the message horizontally */
+    int msg_len = strlen(message);
+    int msg_x = 320 - (msg_len * 8 / 2);
+    font_bmp_draw_main(msg_x, 235, message);
+
+    /* Progress indicator dots for active states */
+    if (strstr(message, "Dialing") || strstr(message, "Connecting") ||
+        strstr(message, "Initializing") || strstr(message, "Setting")) {
+        font_bmp_set_color(0xFF00DDFF);
+        static int dot_count = 0;
+        dot_count = (dot_count + 1) % 4;
+        char dots[5] = "";
+        for (int i = 0; i < dot_count; i++) {
+            strcat(dots, ".");
+        }
+        font_bmp_draw_main(320, 260, dots);
+    }
+
+    pvr_list_finish();
+    pvr_scene_finish();
+
+    /* Hold frame so it's visible */
+    thd_sleep(600);
+}
+
+void
+dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_ptr, uint32_t title_color) {
+    popup_setup(state, _colors, timeout_ptr, title_color);
+    dcnow_choice = 0;
+    dcnow_scroll_offset = 0;
+    dcnow_view = DCNOW_VIEW_GAMES;
+    dcnow_selected_game = -1;
+
+    /* Store navigate timeout pointer for input debouncing */
+    dcnow_navigate_timeout = timeout_ptr;
+
+    /* Set the draw state to DRAW_DCNOW_PLAYERS to actually show the DC Now menu */
+    *state = DRAW_DCNOW_PLAYERS;
+
+    /* Network initialization is now done via menu option, not automatically */
+    /* User can select "Connect to DreamPi" from the DC Now menu */
+
+    /* If network is already initialized and we haven't fetched data yet, try to fetch */
+    if (dcnow_net_initialized && !dcnow_data_fetched && !dcnow_is_loading) {
+        dcnow_is_loading = true;
+
+        /* Show VMU refresh indicator while we block on the fetch */
+        dcnow_vmu_show_refreshing();
+
+        /* Attempt to fetch fresh data from dreamcast.online/now */
+        int result = dcnow_fetch_data(&dcnow_data, 5000);  /* 5 second timeout */
+
+        if (result == 0) {
+            dcnow_data_fetched = true;
+            /* Update VMU display with games list */
+            dcnow_vmu_update_display(&dcnow_data);
+            dcnow_last_fetch_ms = timer_ms_gettime64();
+        } else {
+            /* Failed to fetch - try to use cached data */
+            if (!dcnow_get_cached_data(&dcnow_data)) {
+                /* No cached data available, show error */
+                memset(&dcnow_data, 0, sizeof(dcnow_data));
+                strcpy(dcnow_data.error_message, "Not connected - select Connect to begin");
+                dcnow_data.data_valid = false;
+            }
+        }
+
+        dcnow_is_loading = false;
+    } else if (!dcnow_net_initialized) {
+        /* Show message prompting user to connect */
+        memset(&dcnow_data, 0, sizeof(dcnow_data));
+        strcpy(dcnow_data.error_message, "Not connected");
+        dcnow_data.data_valid = false;
+    }
+}
+
+/* Helper to render a connection status frame before blocking operation */
+static void render_connection_frame(const char* message) {
+    pvr_wait_ready();
+    pvr_scene_begin();
+
+    draw_set_list(PVR_LIST_OP_POLY);
+    pvr_list_begin(PVR_LIST_OP_POLY);
+    pvr_list_finish();
+
+    draw_set_list(PVR_LIST_TR_POLY);
+    pvr_list_begin(PVR_LIST_TR_POLY);
+
+    /* White border */
+    const int border_width = 2;
+    draw_draw_quad(160 - border_width, 200 - border_width,
+                   320 + (2 * border_width), 80 + (2 * border_width),
+                   0xFFFFFFFF);
+
+    /* Black background */
+    draw_draw_quad(160, 200, 320, 80, 0xFF000000);
+
+    /* Message */
+    font_bmf_begin_draw();
+    font_bmf_draw_centered(320, 230, 0xFFFFFFFF, message);
+
+    pvr_list_finish();
+    pvr_scene_finish();
+}
+
+void
+handle_input_dcnow(enum control input) {
+    /* Check navigate timeout to prevent input skipping */
+    if (dcnow_navigate_timeout && *dcnow_navigate_timeout > 0) {
+        return;
+    }
+
+    switch (input) {
+        case A: {
+            /* A button: Connect / Fetch data / Drill down into game */
+            if (!dcnow_net_initialized) {
+                /* Connect to DreamPi */
+                printf("DC Now: Starting connection...\n");
+                dcnow_set_status_callback(dcnow_connection_status_callback);
+                int net_result = dcnow_net_early_init();
+                dcnow_set_status_callback(NULL);
+
+                if (net_result < 0) {
+                    printf("DC Now: Connection failed: %d\n", net_result);
+                    memset(&dcnow_data, 0, sizeof(dcnow_data));
+                    snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
+                            "Connection failed (error %d). Press A to retry", net_result);
+                    dcnow_data.data_valid = false;
+                    /* Don't set dcnow_net_initialized = true on failure! */
+                    /* User needs to be able to retry connection */
+                } else {
+                    printf("DC Now: Connection successful\n");
+                    dcnow_net_initialized = true;
+                    memset(&dcnow_data, 0, sizeof(dcnow_data));
+                    snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
+                            "Connected! Press X to fetch data");
+                    dcnow_data.data_valid = false;
+                }
+            } else if (!dcnow_data.data_valid) {
+                /* Fetch initial data */
+                printf("DC Now: Requesting initial fetch...\n");
+                dcnow_data_fetched = false;
+                dcnow_is_loading = true;
+                dcnow_needs_fetch = true;
+                dcnow_choice = 0;
+                dcnow_scroll_offset = 0;
+            } else if (dcnow_view == DCNOW_VIEW_GAMES && dcnow_choice < dcnow_data.game_count) {
+                /* Drill down into selected game to show players */
+                dcnow_selected_game = dcnow_choice;
+                dcnow_view = DCNOW_VIEW_PLAYERS;
+                dcnow_choice = 0;
+                dcnow_scroll_offset = 0;
+                printf("DC Now: Drilling down - game_idx=%d, view now=%d (1=PLAYERS)\n",
+                       dcnow_selected_game, dcnow_view);
+                /* Set timeout after navigation */
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+            } else {
+                printf("DC Now: A pressed but conditions not met - view=%d, choice=%d, game_count=%d, data_valid=%d\n",
+                       dcnow_view, dcnow_choice, dcnow_data.game_count, dcnow_data.data_valid);
+            }
+        } break;
+        case X: {
+            /* X button: Refresh data */
+            if (dcnow_net_initialized && dcnow_data.data_valid) {
+                printf("DC Now: Requesting refresh...\n");
+                dcnow_data_fetched = false;
+                dcnow_data.data_valid = false;
+                dcnow_is_loading = true;
+                dcnow_needs_fetch = true;
+                dcnow_shown_loading = false;  /* Reset flag so loading screen shows */
+                dcnow_view = DCNOW_VIEW_GAMES;
+                dcnow_choice = 0;
+                dcnow_scroll_offset = 0;
+                /* Set timeout after refresh action */
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+            }
+        } break;
+        case B: {
+            /* B button: Back or Close */
+            printf("DC Now: B pressed, view=%d (0=GAMES, 1=PLAYERS)\n", dcnow_view);
+            if (dcnow_view == DCNOW_VIEW_PLAYERS) {
+                /* Go back to game list */
+                printf("DC Now: Going back to game list\n");
+                dcnow_view = DCNOW_VIEW_GAMES;
+                /* Restore previous selection, ensuring it's valid */
+                if (dcnow_selected_game >= 0 && dcnow_selected_game < dcnow_data.game_count) {
+                    dcnow_choice = dcnow_selected_game;
+                } else {
+                    dcnow_choice = 0;
+                }
+                dcnow_scroll_offset = 0;
+                dcnow_selected_game = -1;
+                /* Set timeout after back navigation */
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+                /* DO NOT close the menu - just return to games view */
+                return;  /* Early return to prevent any further processing */
+            }
+            /* If we reach here, we're in games view, so close the menu */
+            printf("DC Now: Closing DC Now menu\n");
+            *state_ptr = DRAW_UI;
+            /* Set timeout after closing menu */
+            if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+        } break;
+        case START: {
+            /* START button: Do nothing (let it close the menu naturally) */
+        } break;
+        case UP: {
+            /* Scroll up */
+            if (dcnow_choice > 0) {
+                dcnow_choice--;
+                /* Adjust scroll offset if selection goes above visible area */
+                if (dcnow_choice < dcnow_scroll_offset) {
+                    dcnow_scroll_offset = dcnow_choice;
+                }
+                printf("DC Now: UP - choice=%d, scroll_offset=%d\n", dcnow_choice, dcnow_scroll_offset);
+                /* Set timeout after navigation to prevent skipping */
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+            }
+        } break;
+        case DOWN: {
+            /* Scroll down */
+            int max_items = 0;
+            int total_items = 0;
+            if (dcnow_view == DCNOW_VIEW_GAMES && dcnow_data.data_valid) {
+                total_items = dcnow_data.game_count;
+                max_items = total_items - 1;
+            } else if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0) {
+                total_items = dcnow_data.games[dcnow_selected_game].player_count;
+                max_items = total_items - 1;
+            }
+
+            if (total_items > 0 && dcnow_choice < max_items) {
+                dcnow_choice++;
+                /* Adjust scroll offset if selection goes below visible area */
+                int max_visible = (sf_ui[0] == UI_SCROLL || sf_ui[0] == UI_FOLDERS) ? 10 : 8;
+                if (dcnow_choice >= dcnow_scroll_offset + max_visible) {
+                    dcnow_scroll_offset = dcnow_choice - max_visible + 1;
+                }
+                /* Ensure scroll offset doesn't go negative */
+                if (dcnow_scroll_offset < 0) {
+                    dcnow_scroll_offset = 0;
+                }
+                printf("DC Now: DOWN - choice=%d, scroll_offset=%d, max_items=%d\n",
+                       dcnow_choice, dcnow_scroll_offset, max_items);
+                /* Set timeout after navigation to prevent skipping */
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+            }
+        } break;
+        case TRIG_L:
+        case TRIG_R: {
+            /* L+R pressed together: manual refresh (same flow as X) */
+            if (INPT_TriggerPressed(TRIGGER_L) && INPT_TriggerPressed(TRIGGER_R)) {
+                if (dcnow_net_initialized && dcnow_data.data_valid) {
+                    printf("DC Now: L+R refresh requested\n");
+                    dcnow_data_fetched = false;
+                    dcnow_data.data_valid = false;
+                    dcnow_is_loading = true;
+                    dcnow_needs_fetch = true;
+                    dcnow_shown_loading = false;
+                    dcnow_view = DCNOW_VIEW_GAMES;
+                    dcnow_choice = 0;
+                    dcnow_scroll_offset = 0;
+                    if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+                }
+            }
+        } break;
+        case Y: {
+            /* Y button: Disconnect from network */
+            if (dcnow_net_initialized) {
+                printf("DC Now: Disconnecting...\n");
+                /* Disconnect modem/network - brief freeze (~700ms) is acceptable */
+                dcnow_net_disconnect();
+                dcnow_net_initialized = false;
+                dcnow_data_fetched = false;
+                dcnow_last_fetch_ms = 0;
+                memset(&dcnow_data, 0, sizeof(dcnow_data));
+                snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
+                        "Disconnected. Press A to reconnect");
+                dcnow_data.data_valid = false;
+                dcnow_view = DCNOW_VIEW_GAMES;
+                dcnow_choice = 0;
+                dcnow_scroll_offset = 0;
+                printf("DC Now: Disconnected successfully\n");
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+            }
+        } break;
+        default:
+            break;
+    }
+}
+
+void
+draw_dcnow_op(void) { /* Opaque pass - nothing to draw */ }
+
+void
+draw_dcnow_tr(void) {
+    z_set_cond(205.0f);
+
+    /* Check if we need to fetch data (only after showing loading screen) */
+    if (dcnow_needs_fetch && dcnow_shown_loading) {
+        dcnow_needs_fetch = false;
+        printf("DC Now: Fetching data...\n");
+
+        /* Show VMU refresh indicator while we block on the network */
+        dcnow_vmu_show_refreshing();
+
+        int result = dcnow_fetch_data(&dcnow_data, 5000);
+        if (result == 0) {
+            dcnow_data_fetched = true;
+            dcnow_vmu_update_display(&dcnow_data);
+            dcnow_last_fetch_ms = timer_ms_gettime64();
+            printf("DC Now: Data refreshed successfully\n");
+        } else {
+            printf("DC Now: Data refresh failed: %d\n", result);
+        }
+
+        dcnow_is_loading = false;
+    }
+
+    /* Auto-refresh every 60 seconds while the popup is open with valid data */
+    if (dcnow_net_initialized && dcnow_data.data_valid && !dcnow_is_loading && dcnow_last_fetch_ms > 0) {
+        uint64_t now = timer_ms_gettime64();
+        if ((now - dcnow_last_fetch_ms) >= DCNOW_AUTO_REFRESH_MS) {
+            printf("DC Now: Auto-refresh triggered\n");
+            dcnow_vmu_show_refreshing();
+
+            int result = dcnow_fetch_data(&dcnow_temp_data, 5000);
+            if (result == 0) {
+                memcpy(&dcnow_data, &dcnow_temp_data, sizeof(dcnow_data));
+                dcnow_vmu_update_display(&dcnow_data);
+                printf("DC Now: Auto-refresh completed successfully\n");
+            } else {
+                /* Fetch failed — keep old data, restore old VMU display */
+                dcnow_vmu_update_display(&dcnow_data);
+                printf("DC Now: Auto-refresh failed: %d\n", result);
+            }
+            dcnow_last_fetch_ms = timer_ms_gettime64();
+        }
+    }
+
+    if (sf_ui[0] == UI_SCROLL || sf_ui[0] == UI_FOLDERS) {
+        /* Scroll/Folders mode - use bitmap font */
+        const int line_height = 20;
+        const int title_gap = line_height;
+        const int padding = 16;
+        const int max_visible_games = 10;  /* Show at most 10 games at once */
+
+        /* Calculate width based on content */
+        int max_line_len = 30;  /* "Dreamcast NOW! - Online Now" */
+        const int icon_space = 36;  /* Extra space for 28px icon + 8px gap */
+
+        /* Check instruction text length - account for all buttons: A=Fetch Y=Disconnect X=Refresh B=Close */
+        const char* instructions = "A=Fetch  Y=Disconnect  X=Refresh  B=Close";
+        int instr_len = strlen(instructions) + 4;  /* Extra margin for colored buttons */
+        if (instr_len > max_line_len) {
+            max_line_len = instr_len;
+        }
+
+        if (dcnow_data.data_valid) {
+            for (int i = 0; i < dcnow_data.game_count; i++) {
+                int len = strlen(dcnow_data.games[i].game_name) + 15;  /* name + " - 999 players" + margin */
+                if (len > max_line_len) {
+                    max_line_len = len;
+                }
+            }
+            /* Check player names and details in player view */
+            if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0 &&
+                dcnow_selected_game < dcnow_data.game_count) {
+                int player_count = dcnow_data.games[dcnow_selected_game].player_count;
+                for (int i = 0; i < player_count && i < 64; i++) {
+                    int len = strlen(dcnow_data.games[dcnow_selected_game].player_names[i]);
+                    const json_player_details_t *details = &dcnow_data.games[dcnow_selected_game].player_details[i];
+                    /* Add space for " [Level | Country]" if present */
+                    if (details->level[0] != '\0' || details->country[0] != '\0') {
+                        len += strlen(details->level) + strlen(details->country) + 8;  /* " [ | ]" + margin */
+                    }
+                    if (len > max_line_len) {
+                        max_line_len = len;
+                    }
+                }
+            }
+        } else {
+            int err_len = strlen(dcnow_data.error_message);
+            if (err_len > max_line_len) {
+                max_line_len = err_len;
+            }
+        }
+
+        const int width = (max_line_len * 8) + padding + icon_space;
+
+        int num_lines = 2;  /* Title + total players line */
+        if (dcnow_data.data_valid) {
+            if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0) {
+                /* Player list view */
+                int player_count = dcnow_data.games[dcnow_selected_game].player_count;
+                num_lines += 1;  /* Game title line */
+                num_lines += (player_count < max_visible_games ? player_count : max_visible_games);
+                if (player_count > max_visible_games) {
+                    num_lines += 1;  /* Scroll indicator */
+                }
+                num_lines += 3;  /* Separator + spacing + instructions */
+            } else {
+                /* Game list view */
+                num_lines += (dcnow_data.game_count < max_visible_games ? dcnow_data.game_count : max_visible_games);
+                if (dcnow_data.game_count > max_visible_games) {
+                    num_lines += 1;  /* Scroll indicator */
+                }
+                num_lines += 3;  /* Separator + spacing + instructions */
+            }
+        } else {
+            num_lines += 3;  /* Error message + separator + instructions */
+        }
+
+        const int height = (int)((num_lines * line_height + title_gap) * 1.5);
+        const int x = (640 / 2) - (width / 2);
+        const int y = (480 / 2) - (height / 2);
+        const int x_item = x + (padding / 2);
+
+        /* Draw stunning DC Now popup with enhanced visuals */
+        draw_popup_menu(x, y, width, height);
+
+        /* Add cyan accent border for DC Now popup */
+        const int accent_offset = 3;
+        draw_draw_quad(x - accent_offset, y - accent_offset, width + (2 * accent_offset), 2, 0xFF00DDFF);  /* Top */
+        draw_draw_quad(x - accent_offset, y + height + accent_offset - 2, width + (2 * accent_offset), 2, 0xFF00DDFF);  /* Bottom */
+        draw_draw_quad(x - accent_offset, y - accent_offset, 2, height + (2 * accent_offset), 0xFF00DDFF);  /* Left */
+        draw_draw_quad(x + width + accent_offset - 2, y - accent_offset, 2, height + (2 * accent_offset), 0xFF00DDFF);  /* Right */
+
+        /* Add Dreamcast button color corner accents */
+        draw_draw_quad(x - 6, y - 6, 8, 8, 0xFFDD2222);  /* Top-left - RED (A button) */
+        draw_draw_quad(x + width - 2, y - 6, 8, 8, 0xFF3399FF);  /* Top-right - BLUE (B button) */
+        draw_draw_quad(x - 6, y + height - 2, 8, 8, 0xFF00DD00);  /* Bottom-left - GREEN (Y button) */
+        draw_draw_quad(x + width - 2, y + height - 2, 8, 8, 0xFFFFCC00);  /* Bottom-right - YELLOW (X button) */
+
+        int cur_y = y + 2;
+        font_bmp_begin_draw();
+
+        /* Title with debug view indicator */
+        char title[64];
+        if (dcnow_view == DCNOW_VIEW_PLAYERS) {
+            snprintf(title, sizeof(title), "Dreamcast NOW! - Player List");
+        } else {
+            snprintf(title, sizeof(title), "Dreamcast NOW! - Online Now");
+        }
+        int title_x = x + (width / 2) - ((strlen(title) * 8) / 2);
+        font_bmp_set_color(0xFF00DDFF);  /* Bright cyan for title */
+        font_bmp_draw_main(title_x, cur_y, title);
+
+        cur_y += title_gap;
+
+        if (dcnow_is_loading) {
+            /* Show loading message */
+            font_bmp_set_color(text_color);
+            font_bmp_draw_main(x_item, cur_y, "Refreshing... Please Wait");
+            dcnow_shown_loading = true;  /* Mark that we've shown the loading screen */
+            cur_y += line_height;
+        } else if (dcnow_data.data_valid) {
+            if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0) {
+                /* Show player list for selected game */
+                char game_name_buf[80];
+                char player_count_buf[20];
+                snprintf(game_name_buf, sizeof(game_name_buf), "%s - ",
+                         dcnow_data.games[dcnow_selected_game].game_name);
+                snprintf(player_count_buf, sizeof(player_count_buf), "%d players",
+                         dcnow_data.games[dcnow_selected_game].player_count);
+
+                /* Draw game name in white */
+                font_bmp_set_color(text_color);
+                int name_width = strlen(game_name_buf) * 8;
+                font_bmp_draw_main(x_item, cur_y, game_name_buf);
+
+                /* Draw player count in yellow-green */
+                font_bmp_set_color(0xFFAAFF00);
+                font_bmp_draw_main(x_item + name_width, cur_y, player_count_buf);
+                cur_y += line_height;
+
+                int player_count = dcnow_data.games[dcnow_selected_game].player_count;
+                int visible_count = (player_count < max_visible_games) ? player_count : max_visible_games;
+
+                for (int i = 0; i < visible_count; i++) {
+                    int player_idx = dcnow_scroll_offset + i;
+                    if (player_idx >= player_count) break;
+
+                    font_bmp_set_color(player_idx == dcnow_choice ? 0xFFFF8800 : text_color);  /* Bright orange for selection */
+                    font_bmp_draw_main(x_item, cur_y, dcnow_data.games[dcnow_selected_game].player_names[player_idx]);
+
+                    /* Show level and country for highlighted player */
+                    if (player_idx == dcnow_choice) {
+                        const json_player_details_t *details = &dcnow_data.games[dcnow_selected_game].player_details[player_idx];
+                        if (details->level[0] != '\0' || details->country[0] != '\0') {
+                            char info[64];
+                            if (details->level[0] != '\0' && details->country[0] != '\0') {
+                                snprintf(info, sizeof(info), " [%s | %s]", details->level, details->country);
+                            } else if (details->level[0] != '\0') {
+                                snprintf(info, sizeof(info), " [%s]", details->level);
+                            } else {
+                                snprintf(info, sizeof(info), " [%s]", details->country);
+                            }
+                            int name_width = strlen(dcnow_data.games[dcnow_selected_game].player_names[player_idx]) * 8;
+                            font_bmp_set_color(0xFF88CCFF);  /* Light blue for details */
+                            font_bmp_draw_main(x_item + name_width, cur_y, info);
+                        }
+                    }
+
+                    cur_y += line_height;
+                }
+
+                /* Show scroll indicators if needed */
+                if (player_count > max_visible_games) {
+                    char scroll_info[32];
+                    snprintf(scroll_info, sizeof(scroll_info), "(%d/%d)",
+                             dcnow_choice + 1, player_count);
+                    font_bmp_set_color(0xFFBBBBBB);  /* Light gray for scroll info */
+                    font_bmp_draw_main(x_item, cur_y, scroll_info);
+                    cur_y += line_height;
+                }
+            } else {
+                /* Show total players with color coding */
+                char total_label[40];
+                char total_count[20];
+                snprintf(total_label, sizeof(total_label), "Total Active Players: ");
+                snprintf(total_count, sizeof(total_count), "%d", dcnow_data.total_players);
+
+                /* Draw label in light blue */
+                font_bmp_set_color(0xFF88CCFF);
+                int label_width = strlen(total_label) * 8;
+                font_bmp_draw_main(x_item, cur_y, total_label);
+
+                /* Draw count in yellow-green */
+                font_bmp_set_color(0xFFAAFF00);
+                font_bmp_draw_main(x_item + label_width, cur_y, total_count);
+                cur_y += line_height + 4;  /* Extra spacing after total */
+
+                /* Show game list */
+                if (dcnow_data.game_count == 0) {
+                font_bmp_set_color(text_color);
+                font_bmp_draw_main(x_item, cur_y, "No active games");
+                cur_y += line_height;
+            } else {
+                /* Show games with scrolling support */
+                int visible_count = (dcnow_data.game_count < max_visible_games) ?
+                                   dcnow_data.game_count : max_visible_games;
+
+                for (int i = 0; i < visible_count; i++) {
+                    int game_idx = dcnow_scroll_offset + i;
+                    if (game_idx >= dcnow_data.game_count) break;
+
+                    /* Try to load box art icon for this game */
+                    image game_icon;
+                    bool has_icon = false;
+                    if (dcnow_data.games[game_idx].game_code[0] != '\0') {
+                        /* Map API code to product ID */
+                        const char* product_id = get_product_id_from_api_code(dcnow_data.games[game_idx].game_code);
+                        printf("DC Now UI: API code '%s' -> product ID '%s'\n",
+                               dcnow_data.games[game_idx].game_code, product_id);
+
+                        if (product_id && txr_get_small(product_id, &game_icon) == 0) {
+                            /* Check if we got a real texture or just the empty placeholder */
+                            if (game_icon.texture != img_empty_boxart.texture) {
+                                has_icon = true;
+                                printf("DC Now UI: Found texture for '%s'\n", product_id);
+                            } else {
+                                printf("DC Now UI: No texture found for '%s'\n", product_id);
+                            }
+                        }
+                    } else {
+                        printf("DC Now UI: Game %d has empty code\n", game_idx);
+                    }
+
+                    /* Draw box art icon if available (28x28 pixels) */
+                    int text_x = x_item;
+                    if (has_icon) {
+                        const int icon_size = 28;
+                        draw_draw_image(x_item, cur_y - 4, icon_size, icon_size, COLOR_WHITE, &game_icon);
+                        text_x = x_item + icon_size + 6;  /* Icon + small gap */
+                    }
+
+                    /* Format game name and player count separately for better color coding */
+                    char game_name_buf[80];
+                    char player_count_buf[30];
+                    const char* status = dcnow_data.games[game_idx].is_active ? "" : " (offline)";
+
+                    snprintf(game_name_buf, sizeof(game_name_buf), "%s - ", dcnow_data.games[game_idx].game_name);
+
+                    if (dcnow_data.games[game_idx].player_count == 1) {
+                        snprintf(player_count_buf, sizeof(player_count_buf), "%d player%s",
+                                 dcnow_data.games[game_idx].player_count, status);
+                    } else {
+                        snprintf(player_count_buf, sizeof(player_count_buf), "%d players%s",
+                                 dcnow_data.games[game_idx].player_count, status);
+                    }
+
+                    /* Draw game name - white or bright orange when selected */
+                    font_bmp_set_color(game_idx == dcnow_choice ? 0xFFFF8800 : text_color);
+                    int name_width = strlen(game_name_buf) * 8;
+                    font_bmp_draw_main(text_x, cur_y, game_name_buf);
+
+                    /* Draw player count in yellow-green */
+                    font_bmp_set_color(0xFFAAFF00);
+                    font_bmp_draw_main(text_x + name_width, cur_y, player_count_buf);
+                    cur_y += line_height;
+                }
+
+                /* Show scroll indicators if needed */
+                if (dcnow_data.game_count > max_visible_games) {
+                    char scroll_info[32];
+                    snprintf(scroll_info, sizeof(scroll_info), "(%d/%d)",
+                             dcnow_choice + 1, dcnow_data.game_count);
+                    font_bmp_set_color(0xFFBBBBBB);  /* Light gray for scroll info */
+                    font_bmp_draw_main(x_item, cur_y, scroll_info);
+                    cur_y += line_height;
+                }
+                }
+            }
+        } else {
+            /* Show error message or connection prompt */
+            font_bmp_set_color(text_color);
+            font_bmp_draw_main(x_item, cur_y, dcnow_data.error_message);
+            cur_y += line_height;
+            if (!dcnow_net_initialized) {
+                font_bmp_draw_main(x_item, cur_y, "Press A to connect");
+            } else {
+                font_bmp_draw_main(x_item, cur_y, "Press A to retry");
+            }
+            cur_y += line_height;
+        }
+
+        /* Separator line before instructions */
+        cur_y += 4;
+        font_bmp_set_color(0xFF00DDFF);  /* Cyan for separator */
+        font_bmp_draw_main(x_item, cur_y, "----------------------------------------");
+        cur_y += line_height;
+
+        /* Instructions with stunning Dreamcast button color-coding */
+        int instr_x = x_item;
+        if (dcnow_view == DCNOW_VIEW_PLAYERS) {
+            /* B button - BLUE */
+            font_bmp_set_color(0xFF3399FF);
+            font_bmp_draw_main(instr_x, cur_y, "B");
+            instr_x += 8;
+            font_bmp_set_color(0xFFCCCCCC);
+            font_bmp_draw_main(instr_x, cur_y, "=Back");
+        } else if (!dcnow_net_initialized) {
+            /* A button - RED */
+            font_bmp_set_color(0xFFDD2222);
+            font_bmp_draw_main(instr_x, cur_y, "A");
+            instr_x += 8;
+            font_bmp_set_color(0xFFCCCCCC);
+            font_bmp_draw_main(instr_x, cur_y, "=Connect  |  ");
+            instr_x += 13 * 8;
+            /* B button - BLUE */
+            font_bmp_set_color(0xFF3399FF);
+            font_bmp_draw_main(instr_x, cur_y, "B");
+            instr_x += 8;
+            font_bmp_set_color(0xFFCCCCCC);
+            font_bmp_draw_main(instr_x, cur_y, "=Close");
+        } else if (!dcnow_data.data_valid) {
+            /* A button - RED */
+            font_bmp_set_color(0xFFDD2222);
+            font_bmp_draw_main(instr_x, cur_y, "A");
+            instr_x += 8;
+            font_bmp_set_color(0xFFCCCCCC);
+            font_bmp_draw_main(instr_x, cur_y, "=Fetch");
+            instr_x += 6 * 8 + 16;  /* text + 16px gap */
+            /* Y button - GREEN */
+            font_bmp_set_color(0xFF00DD00);
+            font_bmp_draw_main(instr_x, cur_y, "Y");
+            instr_x += 8;
+            font_bmp_set_color(0xFFCCCCCC);
+            font_bmp_draw_main(instr_x, cur_y, "=Disconnect");
+            instr_x += 11 * 8 + 16;  /* text + 16px gap */
+            /* B button - BLUE */
+            font_bmp_set_color(0xFF3399FF);
+            font_bmp_draw_main(instr_x, cur_y, "B");
+            instr_x += 8;
+            font_bmp_set_color(0xFFCCCCCC);
+            font_bmp_draw_main(instr_x, cur_y, "=Close");
+        } else {
+            /* A button - RED */
+            font_bmp_set_color(0xFFDD2222);
+            font_bmp_draw_main(instr_x, cur_y, "A");
+            instr_x += 8;
+            font_bmp_set_color(0xFFCCCCCC);
+            font_bmp_draw_main(instr_x, cur_y, "=Details");
+            instr_x += 8 * 8 + 16;  /* text + 16px gap */
+            /* X button - YELLOW */
+            font_bmp_set_color(0xFFFFCC00);
+            font_bmp_draw_main(instr_x, cur_y, "X");
+            instr_x += 8;
+            font_bmp_set_color(0xFFCCCCCC);
+            font_bmp_draw_main(instr_x, cur_y, "=Refresh");
+            instr_x += 8 * 8 + 16;  /* text + 16px gap */
+            /* Y button - GREEN */
+            font_bmp_set_color(0xFF00DD00);
+            font_bmp_draw_main(instr_x, cur_y, "Y");
+            instr_x += 8;
+            font_bmp_set_color(0xFFCCCCCC);
+            font_bmp_draw_main(instr_x, cur_y, "=Disconnect");
+            instr_x += 11 * 8 + 16;  /* text + 16px gap */
+            /* B button - BLUE */
+            font_bmp_set_color(0xFF3399FF);
+            font_bmp_draw_main(instr_x, cur_y, "B");
+            instr_x += 8;
+            font_bmp_set_color(0xFFCCCCCC);
+            font_bmp_draw_main(instr_x, cur_y, "=Close");
+        }
+        cur_y += line_height;
+
+    } else {
+        /* LineDesc/Grid modes - use vector font */
+        const int line_height = 28;
+        const int title_gap = line_height / 2;
+        const int padding = 20;
+        const int max_visible_games = 8;
+        const int icon_space = 44;  /* 36px icon + 8px gap */
+
+        /* Calculate width based on content */
+        int max_line_len = 35;  /* Base width for title */
+
+        /* Check instruction text length (vector font is ~10 pixels per char) */
+        /* Account for all buttons: A=Fetch Y=Disconnect X=Refresh B=Close */
+        const char* instructions = "A=Fetch  Y=Disconnect  X=Refresh  B=Close";
+        int instr_len = strlen(instructions) + 4;  /* Extra margin for colored buttons */
+        if (instr_len > max_line_len) {
+            max_line_len = instr_len;
+        }
+
+        if (dcnow_data.data_valid) {
+            for (int i = 0; i < dcnow_data.game_count; i++) {
+                /* Estimate character width for vector font (~10 pixels/char) */
+                int len = strlen(dcnow_data.games[i].game_name) + 15;
+                if (len > max_line_len) {
+                    max_line_len = len;
+                }
+            }
+            /* Check player names and details in player view */
+            if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0 &&
+                dcnow_selected_game < dcnow_data.game_count) {
+                int player_count = dcnow_data.games[dcnow_selected_game].player_count;
+                for (int i = 0; i < player_count && i < 64; i++) {
+                    int len = strlen(dcnow_data.games[dcnow_selected_game].player_names[i]);
+                    const json_player_details_t *details = &dcnow_data.games[dcnow_selected_game].player_details[i];
+                    /* Add space for " [Level | Country]" if present */
+                    if (details->level[0] != '\0' || details->country[0] != '\0') {
+                        len += strlen(details->level) + strlen(details->country) + 8;  /* " [ | ]" + margin */
+                    }
+                    if (len > max_line_len) {
+                        max_line_len = len;
+                    }
+                }
+            }
+        }
+
+        int num_lines = 2;  /* Title + total */
+        if (dcnow_data.data_valid) {
+            if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0) {
+                /* Player list view */
+                int player_count = dcnow_data.games[dcnow_selected_game].player_count;
+                num_lines += 1;  /* Game title line */
+                num_lines += (player_count < max_visible_games ? player_count : max_visible_games);
+                if (player_count > max_visible_games) {
+                    num_lines += 1;  /* Scroll indicator */
+                }
+                num_lines += 3;  /* Separator + spacing + instructions */
+            } else {
+                /* Game list view */
+                num_lines += (dcnow_data.game_count < max_visible_games ? dcnow_data.game_count : max_visible_games);
+                if (dcnow_data.game_count > max_visible_games) {
+                    num_lines += 1;  /* Scroll indicator */
+                }
+                num_lines += 3;  /* Separator + spacing + instructions */
+            }
+        } else {
+            num_lines += 3;  /* Error message + separator + instructions */
+        }
+
+        const int width = (max_line_len * 10) + padding + icon_space;
+        const int height = (int)((num_lines * line_height + title_gap) * 1.5);
+        const int x = (640 / 2) - (width / 2);
+        const int y = (480 / 2) - (height / 2);
+        const int x_item = x + 10;
+
+        /* Draw stunning DC Now popup with enhanced visuals */
+        draw_popup_menu(x, y, width, height);
+
+        /* Add cyan accent border for DC Now popup */
+        const int accent_offset = 3;
+        draw_draw_quad(x - accent_offset, y - accent_offset, width + (2 * accent_offset), 2, 0xFF00DDFF);  /* Top */
+        draw_draw_quad(x - accent_offset, y + height + accent_offset - 2, width + (2 * accent_offset), 2, 0xFF00DDFF);  /* Bottom */
+        draw_draw_quad(x - accent_offset, y - accent_offset, 2, height + (2 * accent_offset), 0xFF00DDFF);  /* Left */
+        draw_draw_quad(x + width + accent_offset - 2, y - accent_offset, 2, height + (2 * accent_offset), 0xFF00DDFF);  /* Right */
+
+        /* Add Dreamcast button color corner accents */
+        draw_draw_quad(x - 6, y - 6, 8, 8, 0xFFDD2222);  /* Top-left - RED (A button) */
+        draw_draw_quad(x + width - 2, y - 6, 8, 8, 0xFF3399FF);  /* Top-right - BLUE (B button) */
+        draw_draw_quad(x - 6, y + height - 2, 8, 8, 0xFF00DD00);  /* Bottom-left - GREEN (Y button) */
+        draw_draw_quad(x + width - 2, y + height - 2, 8, 8, 0xFFFFCC00);  /* Bottom-right - YELLOW (X button) */
+
+        int cur_y = y + 2;
+        font_bmf_begin_draw();
+        font_bmf_set_height_default();
+
+        /* Title with bright cyan color */
+        if (dcnow_view == DCNOW_VIEW_PLAYERS) {
+            font_bmf_draw_centered(x + width / 2, cur_y, 0xFF00DDFF, "Dreamcast NOW! - Player List");
+        } else {
+            font_bmf_draw_centered(x + width / 2, cur_y, 0xFF00DDFF, "Dreamcast NOW! - Online Now");
+        }
+        cur_y += title_gap;
+
+        if (dcnow_is_loading) {
+            cur_y += line_height;
+            font_bmf_draw(x_item, cur_y, text_color, "Refreshing... Please Wait");
+            dcnow_shown_loading = true;  /* Mark that we've shown the loading screen */
+        } else if (dcnow_data.data_valid) {
+            if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0) {
+                /* Show player list for selected game */
+                cur_y += line_height;
+
+                /* Format game name and player count with different colors */
+                char game_name_buf[80];
+                char player_count_buf[20];
+                snprintf(game_name_buf, sizeof(game_name_buf), "%s - ",
+                         dcnow_data.games[dcnow_selected_game].game_name);
+                snprintf(player_count_buf, sizeof(player_count_buf), "%d players",
+                         dcnow_data.games[dcnow_selected_game].player_count);
+
+                /* Measure game name width for positioning */
+                int name_x = x_item;
+                font_bmf_draw(name_x, cur_y, text_color, game_name_buf);
+
+                /* Draw player count in yellow-green (estimate width) */
+                int count_x = name_x + (strlen(game_name_buf) * 10);
+                font_bmf_draw(count_x, cur_y, 0xFFAAFF00, player_count_buf);
+
+                int player_count = dcnow_data.games[dcnow_selected_game].player_count;
+                int visible_count = (player_count < max_visible_games) ? player_count : max_visible_games;
+
+                for (int i = 0; i < visible_count; i++) {
+                    int player_idx = dcnow_scroll_offset + i;
+                    if (player_idx >= player_count) break;
+
+                    cur_y += line_height;
+                    uint32_t color = (player_idx == dcnow_choice) ? 0xFFFF8800 : text_color;  /* Bright orange for selection */
+                    font_bmf_draw(x_item, cur_y, color, dcnow_data.games[dcnow_selected_game].player_names[player_idx]);
+
+                    /* Show level and country for highlighted player */
+                    if (player_idx == dcnow_choice) {
+                        const json_player_details_t *details = &dcnow_data.games[dcnow_selected_game].player_details[player_idx];
+                        if (details->level[0] != '\0' || details->country[0] != '\0') {
+                            char info[64];
+                            if (details->level[0] != '\0' && details->country[0] != '\0') {
+                                snprintf(info, sizeof(info), " [%s | %s]", details->level, details->country);
+                            } else if (details->level[0] != '\0') {
+                                snprintf(info, sizeof(info), " [%s]", details->level);
+                            } else {
+                                snprintf(info, sizeof(info), " [%s]", details->country);
+                            }
+                            int name_x = x_item + (strlen(dcnow_data.games[dcnow_selected_game].player_names[player_idx]) * 10);
+                            font_bmf_draw(name_x, cur_y, 0xFF88CCFF, info);  /* Light blue for details */
+                        }
+                    }
+                }
+
+                /* Show scroll indicators if needed */
+                if (player_count > max_visible_games) {
+                    cur_y += line_height;
+                    char scroll_info[32];
+                    snprintf(scroll_info, sizeof(scroll_info), "(%d/%d)",
+                             dcnow_choice + 1, player_count);
+                    font_bmf_draw(x_item, cur_y, 0xFFBBBBBB, scroll_info);  /* Light gray */
+                }
+            } else {
+                /* Total players with color coding */
+                cur_y += line_height;
+                char total_label[40];
+                char total_count[20];
+                snprintf(total_label, sizeof(total_label), "Total Active Players: ");
+                snprintf(total_count, sizeof(total_count), "%d", dcnow_data.total_players);
+
+                /* Draw label in light blue */
+                font_bmf_draw(x_item, cur_y, 0xFF88CCFF, total_label);
+
+                /* Draw count in yellow-green (estimate position) */
+                int count_x = x_item + (strlen(total_label) * 10);
+                font_bmf_draw(count_x, cur_y, 0xFFAAFF00, total_count);
+
+                cur_y += 6;  /* Extra spacing after total */
+
+                /* Game list */
+                if (dcnow_data.game_count == 0) {
+                cur_y += line_height;
+                font_bmf_draw(x_item, cur_y, text_color, "No active games");
+            } else {
+                /* Show games with scrolling support */
+                int visible_count = (dcnow_data.game_count < max_visible_games) ?
+                                   dcnow_data.game_count : max_visible_games;
+
+                for (int i = 0; i < visible_count; i++) {
+                    int game_idx = dcnow_scroll_offset + i;
+                    if (game_idx >= dcnow_data.game_count) break;
+
+                    cur_y += line_height;
+
+                    /* Try to load box art icon for this game */
+                    image game_icon;
+                    bool has_icon = false;
+                    if (dcnow_data.games[game_idx].game_code[0] != '\0') {
+                        /* Map API code to product ID */
+                        const char* product_id = get_product_id_from_api_code(dcnow_data.games[game_idx].game_code);
+
+                        if (product_id && txr_get_small(product_id, &game_icon) == 0) {
+                            /* Check if we got a real texture or just the empty placeholder */
+                            if (game_icon.texture != img_empty_boxart.texture) {
+                                has_icon = true;
+                            }
+                        }
+                    }
+
+                    /* Draw box art icon if available (36x36 pixels for vector font) */
+                    int text_x = x_item;
+                    if (has_icon) {
+                        const int icon_size = 36;
+                        draw_draw_image(x_item, cur_y - 6, icon_size, icon_size, COLOR_WHITE, &game_icon);
+                        text_x = x_item + icon_size + 8;  /* Icon + small gap */
+                    }
+
+                    /* Format game name and player count separately for better color coding */
+                    char game_name_buf[80];
+                    char player_count_buf[30];
+                    const char* status = dcnow_data.games[game_idx].is_active ? "" : " (offline)";
+
+                    snprintf(game_name_buf, sizeof(game_name_buf), "%s - ", dcnow_data.games[game_idx].game_name);
+
+                    if (dcnow_data.games[game_idx].player_count == 1) {
+                        snprintf(player_count_buf, sizeof(player_count_buf), "%d player%s",
+                                 dcnow_data.games[game_idx].player_count, status);
+                    } else {
+                        snprintf(player_count_buf, sizeof(player_count_buf), "%d players%s",
+                                 dcnow_data.games[game_idx].player_count, status);
+                    }
+
+                    /* Draw game name - white or bright orange when selected */
+                    uint32_t name_color = (game_idx == dcnow_choice) ? 0xFFFF8800 : text_color;
+                    font_bmf_draw_auto_size(text_x, cur_y, name_color, game_name_buf, width - (text_x - x_item) - 20);
+
+                    /* Draw player count in yellow-green (estimate position) */
+                    int count_x = text_x + (strlen(game_name_buf) * 10);
+                    font_bmf_draw(count_x, cur_y, 0xFFAAFF00, player_count_buf);
+                }
+
+                /* Show scroll indicators if needed */
+                if (dcnow_data.game_count > max_visible_games) {
+                    cur_y += line_height;
+                    char scroll_info[32];
+                    snprintf(scroll_info, sizeof(scroll_info), "(%d/%d)",
+                             dcnow_choice + 1, dcnow_data.game_count);
+                    font_bmf_draw(x_item, cur_y, 0xFFBBBBBB, scroll_info);  /* Light gray */
+                }
+                }
+            }
+        } else {
+            /* Error or connection prompt */
+            cur_y += line_height;
+            font_bmf_draw(x_item, cur_y, text_color, dcnow_data.error_message);
+            cur_y += line_height;
+            if (!dcnow_net_initialized) {
+                font_bmf_draw(x_item, cur_y, text_color, "Press A to connect");
+            } else {
+                font_bmf_draw(x_item, cur_y, text_color, "Press A to retry");
+            }
+            cur_y += line_height;
+        }
+
+        /* Separator line before instructions */
+        cur_y += 6;
+        font_bmf_draw(x_item, cur_y, 0xFF00DDFF, "----------------------------------------");  /* Cyan separator */
+        cur_y += line_height;
+
+        /* Instructions with stunning Dreamcast button color-coding */
+        int instr_x = x_item;
+        if (dcnow_view == DCNOW_VIEW_PLAYERS) {
+            /* B button - BLUE */
+            font_bmf_draw(instr_x, cur_y, 0xFF3399FF, "B");
+            instr_x += 12;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Back");
+        } else if (!dcnow_net_initialized) {
+            /* A button - RED */
+            font_bmf_draw(instr_x, cur_y, 0xFFDD2222, "A");
+            instr_x += 12;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Connect  |  ");
+            instr_x += 130;
+            /* B button - BLUE */
+            font_bmf_draw(instr_x, cur_y, 0xFF3399FF, "B");
+            instr_x += 12;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Close");
+        } else if (!dcnow_data.data_valid) {
+            /* A button - RED */
+            font_bmf_draw(instr_x, cur_y, 0xFFDD2222, "A");
+            instr_x += 12;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Fetch");
+            instr_x += 60 + 20;  /* text + 20px gap */
+            /* Y button - GREEN */
+            font_bmf_draw(instr_x, cur_y, 0xFF00DD00, "Y");
+            instr_x += 12;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Disconnect");
+            instr_x += 110 + 20;  /* text + 20px gap */
+            /* B button - BLUE */
+            font_bmf_draw(instr_x, cur_y, 0xFF3399FF, "B");
+            instr_x += 12;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Close");
+        } else {
+            /* A button - RED */
+            font_bmf_draw(instr_x, cur_y, 0xFFDD2222, "A");
+            instr_x += 12;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Details");
+            instr_x += 80 + 20;  /* text + 20px gap */
+            /* X button - YELLOW */
+            font_bmf_draw(instr_x, cur_y, 0xFFFFCC00, "X");
+            instr_x += 12;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Refresh");
+            instr_x += 80 + 20;  /* text + 20px gap */
+            /* Y button - GREEN */
+            font_bmf_draw(instr_x, cur_y, 0xFF00DD00, "Y");
+            instr_x += 12;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Disconnect");
+            instr_x += 110 + 20;  /* text + 20px gap */
+            /* B button - BLUE */
+            font_bmf_draw(instr_x, cur_y, 0xFF3399FF, "B");
+            instr_x += 12;
+            font_bmf_draw(instr_x, cur_y, 0xFFCCCCCC, "=Close");
+        }
+        cur_y += line_height;
+    }
+}
+
+/* Background auto-refresh for DC Now data (called from main loop)
+ * This ensures data is refreshed every 60 seconds even when popup is closed */
+void
+dcnow_background_tick(void) {
+    /* Only refresh if network is initialized and we have valid data */
+    if (!dcnow_net_initialized || !dcnow_data.data_valid || dcnow_is_loading) {
+        return;
+    }
+
+    /* Check if we have a valid last fetch timestamp */
+    if (dcnow_last_fetch_ms == 0) {
+        return;
+    }
+
+    /* Check if 60 seconds have passed since last refresh */
+    uint64_t now = timer_ms_gettime64();
+    if ((now - dcnow_last_fetch_ms) < DCNOW_AUTO_REFRESH_MS) {
+        return;
+    }
+
+    /* Time to refresh! */
+    printf("DC Now: Background auto-refresh triggered\n");
+    dcnow_vmu_show_refreshing();
+
+    int result = dcnow_fetch_data(&dcnow_temp_data, 5000);
+    if (result == 0) {
+        memcpy(&dcnow_data, &dcnow_temp_data, sizeof(dcnow_data));
+        dcnow_vmu_update_display(&dcnow_data);
+        printf("DC Now: Background auto-refresh completed successfully\n");
+    } else {
+        /* Fetch failed — keep old data, restore old VMU display */
+        dcnow_vmu_update_display(&dcnow_data);
+        printf("DC Now: Background auto-refresh failed: %d\n", result);
+    }
+    dcnow_last_fetch_ms = timer_ms_gettime64();
+}
