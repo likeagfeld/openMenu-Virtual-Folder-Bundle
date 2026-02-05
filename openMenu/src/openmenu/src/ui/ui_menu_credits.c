@@ -30,7 +30,7 @@
 /* Include dcnow_vmu.h early for VMU setting changes */
 #include "../dcnow/dcnow_vmu.h"
 
-/* Discord chat support */
+/* Discross chat support (plain HTTP Discord relay) */
 #include "../dchat/dchat_api.h"
 
 /* External declaration for VM2/VMUPro/USB4Maple detection */
@@ -4199,26 +4199,39 @@ dcnow_background_tick(void) {
 }
 
 /* ==========================================================================
- * Discord Chat Integration
- * Allows Dreamcast users to read and send messages in a Discord channel
- * using the Discord Bot HTTP API via DreamPi/BBA network connection.
+ * Discross Chat Integration
+ * Allows Dreamcast users to read and send messages in Discord channels
+ * via Discross (https://discross.net) - a plain HTTP Discord relay.
+ * Flow: Login -> Server list -> Channel list -> Messages -> Compose
  * ========================================================================== */
 
 typedef enum {
+    DCHAT_VIEW_LOGIN,          /* Logging in to Discross */
+    DCHAT_VIEW_SERVERS,        /* Selecting a server/guild */
+    DCHAT_VIEW_CHANNELS,       /* Selecting a channel */
     DCHAT_VIEW_MESSAGES,       /* Viewing message list */
     DCHAT_VIEW_COMPOSE         /* Typing a new message */
 } dchat_view_t;
 
 static dchat_data_t dchat_data;
-static dchat_view_t dchat_view = DCHAT_VIEW_MESSAGES;
+static dchat_view_t dchat_view = DCHAT_VIEW_LOGIN;
 static int dchat_choice = 0;
 static int dchat_scroll_offset = 0;
-static bool dchat_data_fetched = false;
 static bool dchat_is_loading = false;
+static bool dchat_needs_login = false;
 static bool dchat_needs_fetch = false;
 static bool dchat_shown_loading = false;
 static bool dchat_initialized = false;
 static int* dchat_navigate_timeout = NULL;
+
+/* Track what kind of fetch is pending */
+typedef enum {
+    DCHAT_FETCH_NONE,
+    DCHAT_FETCH_SERVERS,
+    DCHAT_FETCH_CHANNELS,
+    DCHAT_FETCH_MESSAGES
+} dchat_fetch_type_t;
+static dchat_fetch_type_t dchat_pending_fetch = DCHAT_FETCH_NONE;
 
 /* Text input buffer for composing messages */
 static char dchat_input_buf[DCHAT_INPUT_BUF_LEN];
@@ -4278,34 +4291,43 @@ discord_chat_setup(enum draw_state* state, struct theme_color* _colors, int* tim
     popup_setup(state, _colors, timeout_ptr, title_color);
     dchat_choice = 0;
     dchat_scroll_offset = 0;
-    dchat_view = DCHAT_VIEW_MESSAGES;
     dchat_navigate_timeout = timeout_ptr;
+    dchat_pending_fetch = DCHAT_FETCH_NONE;
 
     *state = DRAW_DISCORD_CHAT;
 
-    /* Initialize Discord chat if not done yet */
+    /* Initialize Discross config if not done yet */
     if (!dchat_initialized) {
-        dchat_init();
+        memset(&dchat_data, 0, sizeof(dchat_data));
+        dchat_init(&dchat_data);
         dchat_initialized = true;
     }
 
-    /* If we have network and haven't fetched yet, try to fetch */
-    if (dchat_data.config_loaded && dchat_network_available() && !dchat_data_fetched && !dchat_is_loading) {
-        dchat_is_loading = true;
-        int result = dchat_fetch_messages(&dchat_data, 5000);
-        if (result == 0) {
-            dchat_data_fetched = true;
-            dchat_last_fetch_ms = timer_ms_gettime64();
-        }
-        dchat_is_loading = false;
-    } else if (!dchat_data.config_loaded) {
-        memset(&dchat_data.messages, 0, sizeof(dchat_data.messages));
-        dchat_data.message_count = 0;
-        strcpy(dchat_data.error_message, "No DISCORD.CFG - place config on SD card");
-        dchat_data.data_valid = false;
+    if (!dchat_data.config_loaded) {
+        strcpy(dchat_data.error_message, "No DISCROSS.CFG - place config on SD card");
+        dchat_view = DCHAT_VIEW_LOGIN;
     } else if (!dchat_network_available()) {
         strcpy(dchat_data.error_message, "No network - connect via DC Now first");
-        dchat_data.data_valid = false;
+        dchat_view = DCHAT_VIEW_LOGIN;
+    } else if (dchat_data.logged_in && dchat_data.server_count > 0) {
+        /* Already logged in with servers - go to server list */
+        dchat_view = DCHAT_VIEW_SERVERS;
+    } else if (dchat_data.logged_in) {
+        /* Logged in but no server list yet - fetch servers */
+        dchat_view = DCHAT_VIEW_SERVERS;
+        dchat_is_loading = true;
+        dchat_needs_fetch = true;
+        dchat_shown_loading = false;
+        dchat_pending_fetch = DCHAT_FETCH_SERVERS;
+    } else {
+        /* Not logged in yet - start login */
+        dchat_view = DCHAT_VIEW_LOGIN;
+        if (dchat_data.config_loaded && dchat_network_available()) {
+            /* Auto-login */
+            dchat_needs_login = true;
+            dchat_is_loading = true;
+            dchat_shown_loading = false;
+        }
     }
 }
 
@@ -4315,30 +4337,28 @@ handle_input_discord_chat(enum control input) {
         return;
     }
 
-    /* In compose view, handle keyboard text input */
+    /* --- Compose view: keyboard text input --- */
     if (dchat_view == DCHAT_VIEW_COMPOSE) {
         switch (input) {
             case B: {
-                /* Cancel compose, go back to messages */
                 dchat_view = DCHAT_VIEW_MESSAGES;
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
             case A: {
-                /* Send the message if buffer is not empty */
                 if (dchat_input_pos > 0 && !dchat_sending) {
                     dchat_sending = true;
-                    printf("Discord Chat: Sending message: %s\n", dchat_input_buf);
-
+                    printf("Discross: Sending message: %s\n", dchat_input_buf);
 #ifdef _arch_dreamcast
-                    int result = dchat_send_message(&dchat_data, dchat_input_buf, 5000);
+                    int result = dchat_send_message(&dchat_data,
+                        dchat_data.current_channel_id, dchat_input_buf, 5000);
                     if (result == 0) {
-                        /* Clear input buffer */
                         memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
                         dchat_input_pos = 0;
-                        /* Refresh messages to see our sent message */
+                        /* Refresh messages */
                         dchat_needs_fetch = true;
                         dchat_shown_loading = false;
                         dchat_is_loading = true;
+                        dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
                         dchat_view = DCHAT_VIEW_MESSAGES;
                     }
 #else
@@ -4350,14 +4370,7 @@ handle_input_discord_chat(enum control input) {
                 }
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
-            case LEFT: {
-                /* Move cursor left (for future cursor positioning) */
-            } break;
-            case RIGHT: {
-                /* Move cursor right */
-            } break;
             case Y: {
-                /* Backspace - delete last character */
                 if (dchat_input_pos > 0) {
                     dchat_input_pos--;
                     dchat_input_buf[dchat_input_pos] = '\0';
@@ -4365,25 +4378,22 @@ handle_input_discord_chat(enum control input) {
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
             case X: {
-                /* Add a space */
                 if (dchat_input_pos < DCHAT_INPUT_BUF_LEN - 1) {
                     dchat_input_buf[dchat_input_pos++] = ' ';
                     dchat_input_buf[dchat_input_pos] = '\0';
                 }
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
-            default:
-                break;
+            default: break;
         }
 
-        /* Handle keyboard text input (independent of controller input) */
+        /* Keyboard text input */
         if (!INPT_KeyboardNone()) {
             for (int k = 0; k < INPT_MAX_KEYBOARD_KEYS; k++) {
                 uint8_t scancode = INPT_KeyboardScancode(k);
                 if (scancode == 0) continue;
 
-                /* Backspace scancode (0x2A) */
-                if (scancode == 0x2A) {
+                if (scancode == 0x2A) { /* Backspace */
                     if (dchat_input_pos > 0) {
                         dchat_input_pos--;
                         dchat_input_buf[dchat_input_pos] = '\0';
@@ -4391,18 +4401,19 @@ handle_input_discord_chat(enum control input) {
                     continue;
                 }
 
-                /* Enter scancode (0x28) - send message */
-                if (scancode == 0x28) {
+                if (scancode == 0x28) { /* Enter - send */
                     if (dchat_input_pos > 0 && !dchat_sending) {
                         dchat_sending = true;
 #ifdef _arch_dreamcast
-                        int result = dchat_send_message(&dchat_data, dchat_input_buf, 5000);
+                        int result = dchat_send_message(&dchat_data,
+                            dchat_data.current_channel_id, dchat_input_buf, 5000);
                         if (result == 0) {
                             memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
                             dchat_input_pos = 0;
                             dchat_needs_fetch = true;
                             dchat_shown_loading = false;
                             dchat_is_loading = true;
+                            dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
                             dchat_view = DCHAT_VIEW_MESSAGES;
                         }
 #else
@@ -4415,7 +4426,6 @@ handle_input_discord_chat(enum control input) {
                     continue;
                 }
 
-                /* Convert scancode to character */
                 char c = dchat_scancode_to_char(scancode, INPT_KeyboardModifiers());
                 if (c && dchat_input_pos < DCHAT_INPUT_BUF_LEN - 1) {
                     dchat_input_buf[dchat_input_pos++] = c;
@@ -4424,36 +4434,163 @@ handle_input_discord_chat(enum control input) {
             }
         }
 
-        return;  /* Don't process message view controls */
+        return;
     }
 
-    /* Message list view controls */
-    switch (input) {
-        case A: {
-            if (!dchat_data.data_valid && dchat_data.config_loaded) {
-                /* Try to fetch messages */
-                dchat_is_loading = true;
-                dchat_needs_fetch = true;
-                dchat_shown_loading = false;
+    /* --- Login view --- */
+    if (dchat_view == DCHAT_VIEW_LOGIN) {
+        switch (input) {
+            case A: {
+                if (dchat_data.config_loaded && dchat_network_available() && !dchat_is_loading) {
+                    dchat_needs_login = true;
+                    dchat_is_loading = true;
+                    dchat_shown_loading = false;
+                    if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+                }
+            } break;
+            case B: {
+                *state_ptr = DRAW_UI;
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
-            }
-        } break;
-        case X: {
-            /* Refresh messages */
-            if (dchat_data.config_loaded) {
-                dchat_data_fetched = false;
-                dchat_data.data_valid = false;
+            } break;
+            default: break;
+        }
+        return;
+    }
+
+    /* --- Server list view --- */
+    if (dchat_view == DCHAT_VIEW_SERVERS) {
+        switch (input) {
+            case A: {
+                if (dchat_data.server_count > 0 && dchat_choice < dchat_data.server_count) {
+                    /* Select server, fetch its channels */
+                    printf("Discross: Selected server %d: %s\n", dchat_choice,
+                           dchat_data.servers[dchat_choice].name);
+                    strncpy(dchat_data.current_server_id,
+                            dchat_data.servers[dchat_choice].id, DCHAT_MAX_ID_LEN - 1);
+                    dchat_is_loading = true;
+                    dchat_needs_fetch = true;
+                    dchat_shown_loading = false;
+                    dchat_pending_fetch = DCHAT_FETCH_CHANNELS;
+                    dchat_view = DCHAT_VIEW_CHANNELS;
+                    dchat_choice = 0;
+                    dchat_scroll_offset = 0;
+                    if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+                }
+            } break;
+            case X: {
+                /* Refresh server list */
                 dchat_is_loading = true;
                 dchat_needs_fetch = true;
                 dchat_shown_loading = false;
+                dchat_pending_fetch = DCHAT_FETCH_SERVERS;
                 dchat_choice = 0;
                 dchat_scroll_offset = 0;
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
-            }
+            } break;
+            case B: {
+                *state_ptr = DRAW_UI;
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            case UP: {
+                if (dchat_choice > 0) {
+                    dchat_choice--;
+                    if (dchat_choice < dchat_scroll_offset)
+                        dchat_scroll_offset = dchat_choice;
+                    if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+                }
+            } break;
+            case DOWN: {
+                if (dchat_choice < dchat_data.server_count - 1) {
+                    dchat_choice++;
+                    if (dchat_choice >= dchat_scroll_offset + 10)
+                        dchat_scroll_offset = dchat_choice - 10 + 1;
+                    if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+                }
+            } break;
+            default: break;
+        }
+        return;
+    }
+
+    /* --- Channel list view --- */
+    if (dchat_view == DCHAT_VIEW_CHANNELS) {
+        switch (input) {
+            case A: {
+                if (dchat_data.channel_count > 0 && dchat_choice < dchat_data.channel_count) {
+                    /* Select channel, fetch messages */
+                    printf("Discross: Selected channel %d: %s\n", dchat_choice,
+                           dchat_data.channels[dchat_choice].name);
+                    strncpy(dchat_data.current_channel_id,
+                            dchat_data.channels[dchat_choice].id, DCHAT_MAX_ID_LEN - 1);
+                    dchat_is_loading = true;
+                    dchat_needs_fetch = true;
+                    dchat_shown_loading = false;
+                    dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
+                    dchat_view = DCHAT_VIEW_MESSAGES;
+                    dchat_choice = 0;
+                    dchat_scroll_offset = 0;
+                    dchat_last_fetch_ms = 0;
+                    if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+                }
+            } break;
+            case X: {
+                /* Refresh channel list */
+                dchat_is_loading = true;
+                dchat_needs_fetch = true;
+                dchat_shown_loading = false;
+                dchat_pending_fetch = DCHAT_FETCH_CHANNELS;
+                dchat_choice = 0;
+                dchat_scroll_offset = 0;
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            case B: {
+                /* Back to server list */
+                dchat_view = DCHAT_VIEW_SERVERS;
+                dchat_choice = 0;
+                dchat_scroll_offset = 0;
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+                return;
+            } break;
+            case UP: {
+                if (dchat_choice > 0) {
+                    dchat_choice--;
+                    if (dchat_choice < dchat_scroll_offset)
+                        dchat_scroll_offset = dchat_choice;
+                    if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+                }
+            } break;
+            case DOWN: {
+                if (dchat_choice < dchat_data.channel_count - 1) {
+                    dchat_choice++;
+                    if (dchat_choice >= dchat_scroll_offset + 10)
+                        dchat_scroll_offset = dchat_choice - 10 + 1;
+                    if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+                }
+            } break;
+            default: break;
+        }
+        return;
+    }
+
+    /* --- Message list view --- */
+    switch (input) {
+        case A: {
+            /* No action on A in message view (messages are read-only) */
+        } break;
+        case X: {
+            /* Refresh messages */
+            dchat_data.messages_valid = false;
+            dchat_is_loading = true;
+            dchat_needs_fetch = true;
+            dchat_shown_loading = false;
+            dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
+            dchat_choice = 0;
+            dchat_scroll_offset = 0;
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
         } break;
         case Y: {
             /* Open compose view */
-            if (dchat_data.config_loaded) {
+            if (dchat_data.logged_in && dchat_data.current_channel_id[0]) {
                 dchat_view = DCHAT_VIEW_COMPOSE;
                 memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
                 dchat_input_pos = 0;
@@ -4461,31 +4598,30 @@ handle_input_discord_chat(enum control input) {
             }
         } break;
         case B: {
-            /* Close Discord Chat popup */
-            *state_ptr = DRAW_UI;
+            /* Back to channel list */
+            dchat_view = DCHAT_VIEW_CHANNELS;
+            dchat_choice = 0;
+            dchat_scroll_offset = 0;
             if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            return;
         } break;
         case UP: {
             if (dchat_choice > 0) {
                 dchat_choice--;
-                if (dchat_choice < dchat_scroll_offset) {
+                if (dchat_choice < dchat_scroll_offset)
                     dchat_scroll_offset = dchat_choice;
-                }
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             }
         } break;
         case DOWN: {
-            if (dchat_data.data_valid && dchat_choice < dchat_data.message_count - 1) {
+            if (dchat_data.messages_valid && dchat_choice < dchat_data.message_count - 1) {
                 dchat_choice++;
-                int max_visible = 8;
-                if (dchat_choice >= dchat_scroll_offset + max_visible) {
-                    dchat_scroll_offset = dchat_choice - max_visible + 1;
-                }
+                if (dchat_choice >= dchat_scroll_offset + 8)
+                    dchat_scroll_offset = dchat_choice - 8 + 1;
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             }
         } break;
-        default:
-            break;
+        default: break;
     }
 }
 
@@ -4496,77 +4632,129 @@ void
 draw_discord_chat_tr(void) {
     z_set_cond(205.0f);
 
-    /* Check if we need to fetch data */
+    /* --- Handle pending login --- */
+#ifdef _arch_dreamcast
+    if (dchat_needs_login && dchat_shown_loading) {
+        dchat_needs_login = false;
+        printf("Discross: Logging in as %s...\n", dchat_data.username);
+        int result = dchat_login(&dchat_data, 5000);
+        if (result == 0) {
+            printf("Discross: Login successful, fetching servers...\n");
+            /* Login OK - fetch server list */
+            dchat_needs_fetch = true;
+            dchat_shown_loading = false;
+            dchat_pending_fetch = DCHAT_FETCH_SERVERS;
+            dchat_view = DCHAT_VIEW_SERVERS;
+        } else {
+            printf("Discross: Login failed: %d\n", result);
+            dchat_is_loading = false;
+        }
+    }
+#endif
+
+    /* --- Handle pending data fetch --- */
+#ifdef _arch_dreamcast
     if (dchat_needs_fetch && dchat_shown_loading) {
         dchat_needs_fetch = false;
+        int result = -1;
 
-#ifdef _arch_dreamcast
-        int result = dchat_fetch_messages(&dchat_data, 5000);
-        if (result == 0) {
-            dchat_data_fetched = true;
-            dchat_last_fetch_ms = timer_ms_gettime64();
-            /* Auto-scroll to newest message */
-            if (dchat_data.message_count > 8) {
-                dchat_scroll_offset = dchat_data.message_count - 8;
-                dchat_choice = dchat_data.message_count - 1;
-            }
+        switch (dchat_pending_fetch) {
+            case DCHAT_FETCH_SERVERS:
+                printf("Discross: Fetching server list...\n");
+                result = dchat_fetch_servers(&dchat_data, 5000);
+                if (result == 0) {
+                    printf("Discross: Got %d servers\n", dchat_data.server_count);
+                    dchat_view = DCHAT_VIEW_SERVERS;
+                    dchat_choice = 0;
+                    dchat_scroll_offset = 0;
+                }
+                break;
+            case DCHAT_FETCH_CHANNELS:
+                printf("Discross: Fetching channels for server %s...\n", dchat_data.current_server_id);
+                result = dchat_fetch_channels(&dchat_data, dchat_data.current_server_id, 5000);
+                if (result == 0) {
+                    printf("Discross: Got %d channels\n", dchat_data.channel_count);
+                    dchat_view = DCHAT_VIEW_CHANNELS;
+                    dchat_choice = 0;
+                    dchat_scroll_offset = 0;
+                }
+                break;
+            case DCHAT_FETCH_MESSAGES:
+                printf("Discross: Fetching messages for channel %s...\n", dchat_data.current_channel_id);
+                result = dchat_fetch_messages(&dchat_data, dchat_data.current_channel_id, 5000);
+                if (result == 0) {
+                    printf("Discross: Got %d messages\n", dchat_data.message_count);
+                    dchat_last_fetch_ms = timer_ms_gettime64();
+                    /* Auto-scroll to newest message */
+                    if (dchat_data.message_count > 8) {
+                        dchat_scroll_offset = dchat_data.message_count - 8;
+                        dchat_choice = dchat_data.message_count - 1;
+                    }
+                }
+                break;
+            default:
+                break;
         }
-#endif
+
+        dchat_pending_fetch = DCHAT_FETCH_NONE;
         dchat_is_loading = false;
     }
+#endif
 
-    /* Auto-refresh while popup is open */
+    /* --- Auto-refresh messages while viewing --- */
 #ifdef _arch_dreamcast
-    if (dchat_data.data_valid && !dchat_is_loading && dchat_last_fetch_ms > 0 &&
+    if (dchat_data.messages_valid && !dchat_is_loading && dchat_last_fetch_ms > 0 &&
         dchat_view == DCHAT_VIEW_MESSAGES) {
         uint64_t now = timer_ms_gettime64();
         if ((now - dchat_last_fetch_ms) >= DCHAT_AUTO_REFRESH_MS) {
-            dchat_data_t temp;
-            memcpy(&temp, &dchat_data, sizeof(dchat_data_t));
-            int result = dchat_fetch_messages(&temp, 5000);
+            int result = dchat_fetch_messages(&dchat_data, dchat_data.current_channel_id, 5000);
             if (result == 0) {
-                memcpy(&dchat_data, &temp, sizeof(dchat_data_t));
+                printf("Discross: Auto-refresh got %d messages\n", dchat_data.message_count);
             }
             dchat_last_fetch_ms = timer_ms_gettime64();
         }
     }
 #endif
 
-    /* Drawing - use bitmap font for Scroll/Folders mode, BMF for others */
+    /* --- Drawing --- */
     const int line_height = 20;
     const int title_gap = line_height;
     const int padding = 16;
-    const int max_visible_msgs = 8;
+    const int max_visible = 8;
 
-    /* Calculate popup dimensions */
-    int max_line_len = 35;  /* Title length */
+    /* Calculate popup dimensions based on current view */
+    int max_line_len = 38;
+    int num_lines = 2; /* Title + status/instructions */
 
-    if (dchat_data.data_valid) {
+    if (dchat_view == DCHAT_VIEW_COMPOSE) {
+        num_lines += 6;
+    } else if (dchat_view == DCHAT_VIEW_SERVERS && dchat_data.server_count > 0) {
+        int vis = dchat_data.server_count < max_visible ? dchat_data.server_count : max_visible;
+        num_lines += vis + 3;
+        for (int i = 0; i < dchat_data.server_count; i++) {
+            int len = strlen(dchat_data.servers[i].name) + 4;
+            if (len > max_line_len) max_line_len = len;
+        }
+    } else if (dchat_view == DCHAT_VIEW_CHANNELS && dchat_data.channel_count > 0) {
+        int vis = dchat_data.channel_count < max_visible ? dchat_data.channel_count : max_visible;
+        num_lines += vis + 3;
+        for (int i = 0; i < dchat_data.channel_count; i++) {
+            int len = strlen(dchat_data.channels[i].name) + 6;
+            if (len > max_line_len) max_line_len = len;
+        }
+    } else if (dchat_view == DCHAT_VIEW_MESSAGES && dchat_data.messages_valid) {
+        int vis = dchat_data.message_count < max_visible ? dchat_data.message_count : max_visible;
+        num_lines += vis + 3;
         for (int i = 0; i < dchat_data.message_count; i++) {
-            /* username: content */
             int len = strlen(dchat_data.messages[i].username) + 2 + strlen(dchat_data.messages[i].content);
             if (len > max_line_len) max_line_len = len;
         }
-    }
-    /* Clamp max width */
-    if (max_line_len > 70) max_line_len = 70;
-
-    const int width = (max_line_len * 8) + padding;
-
-    int num_lines = 2;  /* Title + status line */
-    if (dchat_view == DCHAT_VIEW_COMPOSE) {
-        num_lines += 6;  /* Input box + instructions */
-    } else if (dchat_data.data_valid) {
-        num_lines += (dchat_data.message_count < max_visible_msgs ?
-                     dchat_data.message_count : max_visible_msgs);
-        if (dchat_data.message_count > max_visible_msgs) {
-            num_lines += 1;  /* Scroll indicator */
-        }
-        num_lines += 3;  /* Separator + instructions */
     } else {
-        num_lines += 3;  /* Error + separator + instructions */
+        num_lines += 4;
     }
 
+    if (max_line_len > 70) max_line_len = 70;
+    const int width = (max_line_len * 8) + padding;
     const int height = (int)((num_lines * line_height + title_gap) * 1.5);
     const int x = (640 / 2) - (width / 2);
     const int y = (480 / 2) - (height / 2);
@@ -4575,14 +4763,14 @@ draw_discord_chat_tr(void) {
     /* Draw popup background */
     draw_popup_menu(x, y, width, height);
 
-    /* Purple accent border for Discord */
-    const int accent_offset = 3;
-    draw_draw_quad(x - accent_offset, y - accent_offset, width + (2 * accent_offset), 2, 0xFF7289DA);
-    draw_draw_quad(x - accent_offset, y + height + accent_offset - 2, width + (2 * accent_offset), 2, 0xFF7289DA);
-    draw_draw_quad(x - accent_offset, y - accent_offset, 2, height + (2 * accent_offset), 0xFF7289DA);
-    draw_draw_quad(x + width + accent_offset - 2, y - accent_offset, 2, height + (2 * accent_offset), 0xFF7289DA);
+    /* Blurple accent border */
+    const int ao = 3;
+    draw_draw_quad(x - ao, y - ao, width + (2 * ao), 2, 0xFF7289DA);
+    draw_draw_quad(x - ao, y + height + ao - 2, width + (2 * ao), 2, 0xFF7289DA);
+    draw_draw_quad(x - ao, y - ao, 2, height + (2 * ao), 0xFF7289DA);
+    draw_draw_quad(x + width + ao - 2, y - ao, 2, height + (2 * ao), 0xFF7289DA);
 
-    /* Discord-themed corner accents */
+    /* Corner accents */
     draw_draw_quad(x - 6, y - 6, 8, 8, 0xFF7289DA);
     draw_draw_quad(x + width - 2, y - 6, 8, 8, 0xFF7289DA);
     draw_draw_quad(x - 6, y + height - 2, 8, 8, 0xFF7289DA);
@@ -4591,150 +4779,272 @@ draw_discord_chat_tr(void) {
     int cur_y = y + 2;
     font_bmp_begin_draw();
 
-    /* Title */
+    /* Title bar */
     const char *title;
-    if (dchat_view == DCHAT_VIEW_COMPOSE) {
-        title = "Discord Chat - Compose Message";
-    } else {
-        title = "Discord Chat";
+    switch (dchat_view) {
+        case DCHAT_VIEW_LOGIN:    title = "Discross - Login"; break;
+        case DCHAT_VIEW_SERVERS:  title = "Discross - Servers"; break;
+        case DCHAT_VIEW_CHANNELS: title = "Discross - Channels"; break;
+        case DCHAT_VIEW_COMPOSE:  title = "Discross - Compose"; break;
+        default:                  title = "Discross - Chat"; break;
     }
     int title_x = x + (width / 2) - ((strlen(title) * 8) / 2);
-    font_bmp_set_color(0xFF7289DA);  /* Discord blurple */
+    font_bmp_set_color(0xFF7289DA);
     font_bmp_draw_main(title_x, cur_y, title);
     cur_y += title_gap;
 
-    if (dchat_view == DCHAT_VIEW_COMPOSE) {
-        /* Compose view */
+    /* ---- LOGIN VIEW ---- */
+    if (dchat_view == DCHAT_VIEW_LOGIN) {
+        if (dchat_is_loading) {
+            font_bmp_set_color(text_color);
+            font_bmp_draw_main(x_item, cur_y, "Logging in to Discross...");
+            dchat_shown_loading = true;
+            cur_y += line_height;
+        } else if (dchat_data.error_message[0]) {
+            font_bmp_set_color(0xFFFF6666);
+            font_bmp_draw_main(x_item, cur_y, dchat_data.error_message);
+            cur_y += line_height;
+            cur_y += 4;
+            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            cur_y += 6;
+            font_bmp_set_color(0xFF888888);
+            font_bmp_draw_main(x_item, cur_y, "A=Retry  B=Close");
+            cur_y += line_height;
+        } else {
+            font_bmp_set_color(text_color);
+            font_bmp_draw_main(x_item, cur_y, "Ready to connect.");
+            cur_y += line_height;
+            cur_y += 4;
+            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            cur_y += 6;
+            font_bmp_set_color(0xFF888888);
+            font_bmp_draw_main(x_item, cur_y, "A=Login  B=Close");
+            cur_y += line_height;
+        }
+
+    /* ---- SERVER LIST VIEW ---- */
+    } else if (dchat_view == DCHAT_VIEW_SERVERS) {
+        if (dchat_is_loading) {
+            font_bmp_set_color(text_color);
+            font_bmp_draw_main(x_item, cur_y, "Loading servers...");
+            dchat_shown_loading = true;
+            cur_y += line_height;
+        } else if (dchat_data.server_count == 0) {
+            font_bmp_set_color(0xFFFF6666);
+            font_bmp_draw_main(x_item, cur_y, dchat_data.error_message[0] ?
+                dchat_data.error_message : "No servers found");
+            cur_y += line_height;
+            cur_y += 4;
+            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            cur_y += 6;
+            font_bmp_set_color(0xFF888888);
+            font_bmp_draw_main(x_item, cur_y, "X=Refresh  B=Close");
+            cur_y += line_height;
+        } else {
+            /* Server count */
+            char info[64];
+            snprintf(info, sizeof(info), "%d servers", dchat_data.server_count);
+            font_bmp_set_color(0xFF88CCFF);
+            font_bmp_draw_main(x_item, cur_y, info);
+            cur_y += line_height + 4;
+
+            int vis = dchat_data.server_count < max_visible ? dchat_data.server_count : max_visible;
+            for (int i = 0; i < vis; i++) {
+                int idx = dchat_scroll_offset + i;
+                if (idx >= dchat_data.server_count) break;
+                bool selected = (idx == dchat_choice);
+
+                font_bmp_set_color(selected ? 0xFFFF8800 : text_color);
+                char line[80];
+                snprintf(line, sizeof(line), "%s %s", selected ? ">" : " ",
+                         dchat_data.servers[idx].name);
+                font_bmp_draw_main(x_item, cur_y, line);
+                cur_y += line_height;
+            }
+
+            if (dchat_data.server_count > max_visible) {
+                char si[32];
+                snprintf(si, sizeof(si), "(%d/%d)", dchat_choice + 1, dchat_data.server_count);
+                font_bmp_set_color(0xFFBBBBBB);
+                font_bmp_draw_main(x_item, cur_y, si);
+                cur_y += line_height;
+            }
+
+            cur_y += 4;
+            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            cur_y += 6;
+            font_bmp_set_color(0xFF888888);
+            font_bmp_draw_main(x_item, cur_y, "A=Select  X=Refresh  B=Close");
+            cur_y += line_height;
+        }
+
+    /* ---- CHANNEL LIST VIEW ---- */
+    } else if (dchat_view == DCHAT_VIEW_CHANNELS) {
+        if (dchat_is_loading) {
+            font_bmp_set_color(text_color);
+            font_bmp_draw_main(x_item, cur_y, "Loading channels...");
+            dchat_shown_loading = true;
+            cur_y += line_height;
+        } else if (dchat_data.channel_count == 0) {
+            font_bmp_set_color(0xFFFF6666);
+            font_bmp_draw_main(x_item, cur_y, dchat_data.error_message[0] ?
+                dchat_data.error_message : "No channels found");
+            cur_y += line_height;
+            cur_y += 4;
+            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            cur_y += 6;
+            font_bmp_set_color(0xFF888888);
+            font_bmp_draw_main(x_item, cur_y, "X=Refresh  B=Back");
+            cur_y += line_height;
+        } else {
+            char info[64];
+            snprintf(info, sizeof(info), "%d channels", dchat_data.channel_count);
+            font_bmp_set_color(0xFF88CCFF);
+            font_bmp_draw_main(x_item, cur_y, info);
+            cur_y += line_height + 4;
+
+            int vis = dchat_data.channel_count < max_visible ? dchat_data.channel_count : max_visible;
+            for (int i = 0; i < vis; i++) {
+                int idx = dchat_scroll_offset + i;
+                if (idx >= dchat_data.channel_count) break;
+                bool selected = (idx == dchat_choice);
+
+                font_bmp_set_color(selected ? 0xFFFF8800 : text_color);
+                char line[80];
+                snprintf(line, sizeof(line), "%s #%s", selected ? ">" : " ",
+                         dchat_data.channels[idx].name);
+                font_bmp_draw_main(x_item, cur_y, line);
+                cur_y += line_height;
+            }
+
+            if (dchat_data.channel_count > max_visible) {
+                char si[32];
+                snprintf(si, sizeof(si), "(%d/%d)", dchat_choice + 1, dchat_data.channel_count);
+                font_bmp_set_color(0xFFBBBBBB);
+                font_bmp_draw_main(x_item, cur_y, si);
+                cur_y += line_height;
+            }
+
+            cur_y += 4;
+            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            cur_y += 6;
+            font_bmp_set_color(0xFF888888);
+            font_bmp_draw_main(x_item, cur_y, "A=Select  X=Refresh  B=Back");
+            cur_y += line_height;
+        }
+
+    /* ---- COMPOSE VIEW ---- */
+    } else if (dchat_view == DCHAT_VIEW_COMPOSE) {
         font_bmp_set_color(0xFF88CCFF);
         font_bmp_draw_main(x_item, cur_y, "Type your message (keyboard):");
         cur_y += line_height;
 
-        /* Input box background */
         draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, line_height * 2 + 4, 0xFF1A1A2E);
-        draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, 2, 0xFF7289DA);  /* Top border */
+        draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, 2, 0xFF7289DA);
 
-        /* Show input text with cursor */
         char display_buf[DCHAT_INPUT_BUF_LEN + 2];
         snprintf(display_buf, sizeof(display_buf), "%s_", dchat_input_buf);
         font_bmp_set_color(0xFFFFFFFF);
         font_bmp_draw_main(x_item, cur_y, display_buf);
         cur_y += line_height * 2;
 
-        /* Character count */
         char count_buf[32];
         snprintf(count_buf, sizeof(count_buf), "%d/%d", dchat_input_pos, DCHAT_INPUT_BUF_LEN - 1);
         font_bmp_set_color(0xFF888888);
         font_bmp_draw_main(x_item, cur_y, count_buf);
         cur_y += line_height + 4;
 
-        /* Separator */
         draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
         cur_y += 6;
 
-        /* Instructions */
         if (dchat_sending) {
             font_bmp_set_color(0xFFFFCC00);
             font_bmp_draw_main(x_item, cur_y, "Sending...");
         } else {
             font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A/Enter=Send  Y=Backspace  X=Space  B=Cancel");
+            font_bmp_draw_main(x_item, cur_y, "A/Enter=Send  Y=Bksp  X=Space  B=Cancel");
         }
         cur_y += line_height;
 
-    } else if (dchat_is_loading) {
-        font_bmp_set_color(text_color);
-        font_bmp_draw_main(x_item, cur_y, "Loading messages...");
-        dchat_shown_loading = true;
-        cur_y += line_height;
-
-    } else if (dchat_data.data_valid) {
-        /* Channel info line */
-        char channel_info[64];
-        snprintf(channel_info, sizeof(channel_info), "%d messages", dchat_data.message_count);
-        font_bmp_set_color(0xFF88CCFF);
-        font_bmp_draw_main(x_item, cur_y, channel_info);
-        cur_y += line_height + 4;
-
-        if (dchat_data.message_count == 0) {
+    /* ---- MESSAGES VIEW ---- */
+    } else if (dchat_view == DCHAT_VIEW_MESSAGES) {
+        if (dchat_is_loading) {
             font_bmp_set_color(text_color);
-            font_bmp_draw_main(x_item, cur_y, "No messages in channel");
+            font_bmp_draw_main(x_item, cur_y, "Loading messages...");
+            dchat_shown_loading = true;
             cur_y += line_height;
-        } else {
-            /* Message list with scrolling */
-            int visible = (dchat_data.message_count < max_visible_msgs) ?
-                         dchat_data.message_count : max_visible_msgs;
+        } else if (dchat_data.messages_valid) {
+            char channel_info[64];
+            snprintf(channel_info, sizeof(channel_info), "%d messages", dchat_data.message_count);
+            font_bmp_set_color(0xFF88CCFF);
+            font_bmp_draw_main(x_item, cur_y, channel_info);
+            cur_y += line_height + 4;
 
-            for (int i = 0; i < visible; i++) {
-                int msg_idx = dchat_scroll_offset + i;
-                if (msg_idx >= dchat_data.message_count) break;
+            if (dchat_data.message_count == 0) {
+                font_bmp_set_color(text_color);
+                font_bmp_draw_main(x_item, cur_y, "No messages in channel");
+                cur_y += line_height;
+            } else {
+                int vis = dchat_data.message_count < max_visible ?
+                          dchat_data.message_count : max_visible;
 
-                dchat_message_t *msg = &dchat_data.messages[msg_idx];
+                for (int i = 0; i < vis; i++) {
+                    int msg_idx = dchat_scroll_offset + i;
+                    if (msg_idx >= dchat_data.message_count) break;
+                    dchat_message_t *msg = &dchat_data.messages[msg_idx];
+                    bool selected = (msg_idx == dchat_choice);
 
-                /* Highlight selected message */
-                bool selected = (msg_idx == dchat_choice);
+                    font_bmp_set_color(selected ? 0xFFFF8800 : 0xFF7289DA);
+                    int uname_width = strlen(msg->username) * 8;
+                    font_bmp_draw_main(x_item, cur_y, msg->username);
 
-                /* Draw username in Discord blurple */
-                font_bmp_set_color(selected ? 0xFFFF8800 : 0xFF7289DA);
-                int uname_width = strlen(msg->username) * 8;
-                font_bmp_draw_main(x_item, cur_y, msg->username);
+                    font_bmp_set_color(0xFF666666);
+                    font_bmp_draw_main(x_item + uname_width, cur_y, ": ");
 
-                /* Draw separator */
-                font_bmp_set_color(0xFF666666);
-                font_bmp_draw_main(x_item + uname_width, cur_y, ": ");
+                    int content_max_chars = (width - padding - uname_width - 16) / 8;
+                    char content_display[80];
+                    if ((int)strlen(msg->content) > content_max_chars && content_max_chars > 3) {
+                        strncpy(content_display, msg->content, content_max_chars - 3);
+                        content_display[content_max_chars - 3] = '\0';
+                        strcat(content_display, "...");
+                    } else {
+                        strncpy(content_display, msg->content, sizeof(content_display) - 1);
+                        content_display[sizeof(content_display) - 1] = '\0';
+                    }
 
-                /* Draw message content - truncate if too long */
-                int content_max_chars = (width - padding - uname_width - 16) / 8;
-                char content_display[80];
-                if ((int)strlen(msg->content) > content_max_chars && content_max_chars > 3) {
-                    strncpy(content_display, msg->content, content_max_chars - 3);
-                    content_display[content_max_chars - 3] = '\0';
-                    strcat(content_display, "...");
-                } else {
-                    strncpy(content_display, msg->content, sizeof(content_display) - 1);
-                    content_display[sizeof(content_display) - 1] = '\0';
+                    font_bmp_set_color(selected ? 0xFFFFCC00 : text_color);
+                    font_bmp_draw_main(x_item + uname_width + 16, cur_y, content_display);
+                    cur_y += line_height;
                 }
 
-                font_bmp_set_color(selected ? 0xFFFFCC00 : text_color);
-                font_bmp_draw_main(x_item + uname_width + 16, cur_y, content_display);
-
-                cur_y += line_height;
+                if (dchat_data.message_count > max_visible) {
+                    char scroll_info[32];
+                    snprintf(scroll_info, sizeof(scroll_info), "(%d/%d)",
+                             dchat_choice + 1, dchat_data.message_count);
+                    font_bmp_set_color(0xFFBBBBBB);
+                    font_bmp_draw_main(x_item, cur_y, scroll_info);
+                    cur_y += line_height;
+                }
             }
 
-            /* Scroll indicator */
-            if (dchat_data.message_count > max_visible_msgs) {
-                char scroll_info[32];
-                snprintf(scroll_info, sizeof(scroll_info), "(%d/%d)",
-                         dchat_choice + 1, dchat_data.message_count);
-                font_bmp_set_color(0xFFBBBBBB);
-                font_bmp_draw_main(x_item, cur_y, scroll_info);
-                cur_y += line_height;
-            }
+            cur_y += 4;
+            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            cur_y += 6;
+            font_bmp_set_color(0xFF888888);
+            font_bmp_draw_main(x_item, cur_y, "X=Refresh  Y=Compose  B=Back");
+            cur_y += line_height;
+        } else {
+            /* Error state */
+            font_bmp_set_color(0xFFFF6666);
+            font_bmp_draw_main(x_item, cur_y, dchat_data.error_message[0] ?
+                dchat_data.error_message : "Failed to load messages");
+            cur_y += line_height;
+            cur_y += 4;
+            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            cur_y += 6;
+            font_bmp_set_color(0xFF888888);
+            font_bmp_draw_main(x_item, cur_y, "X=Retry  B=Back");
+            cur_y += line_height;
         }
-
-        /* Separator */
-        cur_y += 4;
-        draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
-        cur_y += 6;
-
-        /* Instructions with colored button labels */
-        font_bmp_set_color(0xFF888888);
-        font_bmp_draw_main(x_item, cur_y, "A=Fetch  X=Refresh  Y=Compose  B=Close");
-        cur_y += line_height;
-
-    } else {
-        /* Error / not connected state */
-        font_bmp_set_color(0xFFFF6666);
-        font_bmp_draw_main(x_item, cur_y, dchat_data.error_message);
-        cur_y += line_height;
-
-        /* Separator */
-        cur_y += 4;
-        draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
-        cur_y += 6;
-
-        /* Instructions */
-        font_bmp_set_color(0xFF888888);
-        font_bmp_draw_main(x_item, cur_y, "A=Connect  B=Close");
-        cur_y += line_height;
     }
 }

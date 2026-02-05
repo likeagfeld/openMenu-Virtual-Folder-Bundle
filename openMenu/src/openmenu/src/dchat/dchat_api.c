@@ -1,8 +1,21 @@
+/*
+ * Discross Chat Client for openMenu
+ *
+ * Native Discross (https://discross.net) client for Dreamcast.
+ * Talks to a Discross relay server over plain HTTP (no TLS needed).
+ *
+ * Discross protocol:
+ *   POST /login            - form-encoded username/password -> Set-Cookie: sessionID
+ *   GET  /server/          - HTML server list (parse for guild IDs)
+ *   GET  /server/{id}      - HTML channel list (parse for channel IDs)
+ *   GET  /channels/{id}    - HTML message history (parse <th> and <td>)
+ *   GET  /send?message=..&channel=.. - send message (returns 302)
+ */
+
 #include "dchat_api.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
 
 #ifdef _arch_dreamcast
 #include <kos.h>
@@ -16,551 +29,778 @@
 #include <unistd.h>
 #endif
 
-/* Cached data from last successful fetch */
-static dchat_data_t cached_data = {0};
-static bool cache_valid = false;
+/* ========================================================================
+ * Internal HTTP helpers
+ * ======================================================================== */
 
-/* Discord API hostname and base path */
-#define DISCORD_API_HOST    "discord.com"
-#define DISCORD_API_PORT    443
-/* Note: Discord requires HTTPS (TLS). On Dreamcast hardware without TLS support,
- * a proxy/bridge server is needed. The config file can specify a custom host.
- * For direct use, a local HTTP-to-HTTPS bridge on the DreamPi is recommended.
- * Default: Use a plain HTTP proxy endpoint that the user configures. */
-#define DISCORD_PROXY_HOST  "discord.com"
-#define DISCORD_PROXY_PORT  80
-
-/* Simple JSON string value extractor - finds "key":"value" and copies value to out */
-static int json_extract_string(const char *json, const char *key, char *out, int out_size) {
-    char search[64];
-    snprintf(search, sizeof(search), "\"%s\":", key);
-
-    const char *pos = strstr(json, search);
-    if (!pos) return -1;
-
-    pos += strlen(search);
-
-    /* Skip whitespace */
-    while (*pos == ' ' || *pos == '\t' || *pos == '\n' || *pos == '\r') pos++;
-
-    if (*pos == '"') {
-        pos++;  /* Skip opening quote */
-        int i = 0;
-        while (*pos && *pos != '"' && i < out_size - 1) {
-            /* Handle escaped characters */
-            if (*pos == '\\' && *(pos + 1)) {
-                pos++;
-                switch (*pos) {
-                    case 'n': out[i++] = ' '; break;  /* Newline -> space for display */
-                    case 't': out[i++] = ' '; break;
-                    case '"': out[i++] = '"'; break;
-                    case '\\': out[i++] = '\\'; break;
-                    default: out[i++] = *pos; break;
-                }
-            } else {
-                out[i++] = *pos;
-            }
-            pos++;
-        }
-        out[i] = '\0';
-        return 0;
-    } else if (*pos == 'n') {
-        /* null value */
-        strncpy(out, "", out_size);
-        return 0;
+#ifdef _arch_dreamcast
+/**
+ * Open a TCP connection to the Discross server.
+ * @return socket fd on success, negative on error
+ */
+static int dchat_connect(const char *host, int port) {
+    if (!net_default_dev) {
+        printf("Discross: No network device\n");
+        return -1;
     }
 
-    return -1;
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    }
+    if (sock < 0) {
+        printf("Discross: Socket failed\n");
+        return -2;
+    }
+
+    struct hostent *he = gethostbyname(host);
+    if (!he) {
+        printf("Discross: DNS lookup failed for %s\n", host);
+        close(sock);
+        return -3;
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+    memcpy(&addr.sin_addr, he->h_addr, he->h_length);
+
+    printf("Discross: Connecting to %s:%d...\n", host, port);
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        printf("Discross: Connect failed\n");
+        close(sock);
+        return -4;
+    }
+
+    return sock;
 }
 
 /**
- * Parse Discord messages JSON array response.
- * Discord returns messages newest-first as a JSON array:
- * [{"id":"...","content":"...","author":{"username":"..."},"timestamp":"..."}, ...]
- *
- * This is a minimal parser suitable for the Dreamcast's limited memory.
+ * Send a full HTTP request and receive the response.
+ * @return total bytes received on success, negative on error
  */
-static int dchat_parse_messages(const char *json, dchat_data_t *data) {
-    if (!json || !data) return -1;
-
-    data->message_count = 0;
-
-    /* Find start of array */
-    const char *pos = strchr(json, '[');
-    if (!pos) return -1;
-    pos++;
-
-    int msg_idx = 0;
-
-    while (*pos && msg_idx < DCHAT_MAX_MESSAGES) {
-        /* Find next message object */
-        const char *obj_start = strchr(pos, '{');
-        if (!obj_start) break;
-
-        /* Find matching closing brace - handle nested objects (like "author":{}) */
-        int depth = 0;
-        const char *obj_end = obj_start;
-        do {
-            if (*obj_end == '{') depth++;
-            else if (*obj_end == '}') depth--;
-            if (depth > 0) obj_end++;
-        } while (*obj_end && depth > 0);
-
-        if (!*obj_end) break;
-
-        /* Extract fields from this message object */
-        int obj_len = (int)(obj_end - obj_start + 1);
-        /* Use a temporary buffer for the single message object */
-        char *msg_buf = (char *)malloc(obj_len + 1);
-        if (!msg_buf) break;
-        memcpy(msg_buf, obj_start, obj_len);
-        msg_buf[obj_len] = '\0';
-
-        /* Extract message ID */
-        json_extract_string(msg_buf, "id", data->messages[msg_idx].id, DCHAT_MAX_MSG_ID_LEN);
-
-        /* Extract content */
-        json_extract_string(msg_buf, "content", data->messages[msg_idx].content, DCHAT_MAX_CONTENT_LEN);
-
-        /* Extract timestamp */
-        json_extract_string(msg_buf, "timestamp", data->messages[msg_idx].timestamp, DCHAT_MAX_TIMESTAMP_LEN);
-
-        /* Extract author username - find "author" object first */
-        char *author_pos = strstr(msg_buf, "\"author\"");
-        if (author_pos) {
-            char *author_obj = strchr(author_pos, '{');
-            if (author_obj) {
-                json_extract_string(author_obj, "username",
-                    data->messages[msg_idx].username, DCHAT_MAX_USERNAME_LEN);
-            }
-        }
-
-        /* Fallback if username empty */
-        if (data->messages[msg_idx].username[0] == '\0') {
-            strncpy(data->messages[msg_idx].username, "???", DCHAT_MAX_USERNAME_LEN);
-        }
-
-        free(msg_buf);
-        msg_idx++;
-        pos = obj_end + 1;
+static int dchat_http_exchange(int sock, const char *request, int req_len,
+                                char *response, int buf_size, uint32_t timeout_ms) {
+    int sent = send(sock, request, req_len, 0);
+    if (sent <= 0) {
+        printf("Discross: Send failed\n");
+        return -5;
     }
 
-    data->message_count = msg_idx;
-    return msg_idx;
+    uint64_t start = timer_ms_gettime64();
+    int total = 0;
+
+    while (total < buf_size - 1) {
+        if (timer_ms_gettime64() - start > timeout_ms) break;
+
+        int n = recv(sock, response + total, buf_size - total - 1, 0);
+        if (n > 0) {
+            total += n;
+            start = timer_ms_gettime64();  /* reset timeout on data */
+        } else if (n == 0) {
+            break;  /* connection closed by server */
+        } else {
+            if (total == 0) return -6;
+            break;
+        }
+        thd_pass();
+    }
+
+    response[total] = '\0';
+    return total;
 }
 
-int dchat_init(void) {
-    memset(&cached_data, 0, sizeof(cached_data));
-    cache_valid = false;
+/**
+ * Get the HTTP status code from a response.
+ */
+static int dchat_http_status(const char *response) {
+    /* "HTTP/1.x NNN ..." */
+    if (strncmp(response, "HTTP/1.", 7) != 0) return -1;
+    const char *sp = strchr(response, ' ');
+    if (!sp) return -1;
+    return atoi(sp + 1);
+}
 
-    /* Try to load Discord config from /cd/DISCORD.CFG */
-    FILE *cfg = fopen("/cd/DISCORD.CFG", "r");
+/**
+ * Find the body in an HTTP response (after \r\n\r\n).
+ */
+static const char *dchat_http_body(const char *response) {
+    const char *p = strstr(response, "\r\n\r\n");
+    return p ? p + 4 : NULL;
+}
+
+/**
+ * Extract Set-Cookie: sessionID=VALUE from HTTP response headers.
+ */
+static int dchat_extract_session(const char *response, char *out, int out_size) {
+    const char *cookie = strstr(response, "sessionID=");
+    if (!cookie) return -1;
+
+    cookie += 10;  /* skip "sessionID=" */
+    int i = 0;
+    while (cookie[i] && cookie[i] != ';' && cookie[i] != '\r' && cookie[i] != '\n'
+           && cookie[i] != ' ' && i < out_size - 1) {
+        out[i] = cookie[i];
+        i++;
+    }
+    out[i] = '\0';
+    return (i > 0) ? 0 : -1;
+}
+#endif /* _arch_dreamcast */
+
+/**
+ * URL-encode a string for use in query parameters.
+ * Only encodes the most necessary characters for Discross.
+ */
+static void url_encode(const char *src, char *dst, int dst_size) {
+    int di = 0;
+    for (int i = 0; src[i] && di < dst_size - 4; i++) {
+        char c = src[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            dst[di++] = c;
+        } else if (c == ' ') {
+            dst[di++] = '+';
+        } else {
+            snprintf(dst + di, 4, "%%%02X", (unsigned char)c);
+            di += 3;
+        }
+    }
+    dst[di] = '\0';
+}
+
+/**
+ * Decode basic HTML entities (&amp; &lt; &gt; &quot; &#39;).
+ */
+static void html_decode_inplace(char *str) {
+    char *r = str, *w = str;
+    while (*r) {
+        if (*r == '&') {
+            if (strncmp(r, "&amp;", 5) == 0) { *w++ = '&'; r += 5; }
+            else if (strncmp(r, "&lt;", 4) == 0) { *w++ = '<'; r += 4; }
+            else if (strncmp(r, "&gt;", 4) == 0) { *w++ = '>'; r += 4; }
+            else if (strncmp(r, "&quot;", 6) == 0) { *w++ = '"'; r += 6; }
+            else if (strncmp(r, "&#39;", 5) == 0) { *w++ = '\''; r += 5; }
+            else { *w++ = *r++; }
+        } else {
+            *w++ = *r++;
+        }
+    }
+    *w = '\0';
+}
+
+/**
+ * Strip HTML tags from a string, leaving only text content.
+ */
+static void strip_html_tags(char *str) {
+    char *r = str, *w = str;
+    bool in_tag = false;
+    while (*r) {
+        if (*r == '<') { in_tag = true; r++; continue; }
+        if (*r == '>') { in_tag = false; r++; continue; }
+        if (!in_tag) *w++ = *r;
+        r++;
+    }
+    *w = '\0';
+}
+
+/* ========================================================================
+ * Public API
+ * ======================================================================== */
+
+int dchat_init(dchat_data_t *data) {
+    if (!data) return -1;
+    memset(data, 0, sizeof(dchat_data_t));
+
+    /* Defaults */
+    strcpy(data->host, "discross.net");
+    data->port = DCHAT_DEFAULT_PORT;
+
+    /* Load config from /cd/DISCROSS.CFG */
+    FILE *cfg = fopen("/cd/DISCROSS.CFG", "r");
     if (!cfg) {
-        printf("Discord Chat: No /cd/DISCORD.CFG found\n");
-        cached_data.config_loaded = false;
+        printf("Discross: No /cd/DISCROSS.CFG found\n");
+        data->config_loaded = false;
         return -1;
     }
 
     char line[256];
     while (fgets(line, sizeof(line), cfg)) {
-        /* Remove trailing newline/carriage return */
+        /* Trim trailing whitespace */
         int len = strlen(line);
-        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r' || line[len - 1] == ' ')) {
             line[--len] = '\0';
         }
 
-        if (strncmp(line, "TOKEN=", 6) == 0) {
-            strncpy(cached_data.bot_token, line + 6, DCHAT_MAX_TOKEN_LEN - 1);
-            cached_data.bot_token[DCHAT_MAX_TOKEN_LEN - 1] = '\0';
-            printf("Discord Chat: Token loaded (%d chars)\n", (int)strlen(cached_data.bot_token));
-        } else if (strncmp(line, "CHANNEL=", 8) == 0) {
-            strncpy(cached_data.channel_id, line + 8, DCHAT_MAX_CHANNEL_LEN - 1);
-            cached_data.channel_id[DCHAT_MAX_CHANNEL_LEN - 1] = '\0';
-            printf("Discord Chat: Channel ID: %s\n", cached_data.channel_id);
+        if (strncmp(line, "HOST=", 5) == 0) {
+            strncpy(data->host, line + 5, DCHAT_MAX_HOST_LEN - 1);
+            printf("Discross: Host = %s\n", data->host);
+        } else if (strncmp(line, "PORT=", 5) == 0) {
+            data->port = atoi(line + 5);
+            if (data->port <= 0) data->port = DCHAT_DEFAULT_PORT;
+            printf("Discross: Port = %d\n", data->port);
+        } else if (strncmp(line, "USERNAME=", 9) == 0) {
+            strncpy(data->username, line + 9, DCHAT_MAX_CRED_LEN - 1);
+            printf("Discross: Username = %s\n", data->username);
+        } else if (strncmp(line, "PASSWORD=", 9) == 0) {
+            strncpy(data->password, line + 9, DCHAT_MAX_CRED_LEN - 1);
+            printf("Discross: Password loaded\n");
         }
     }
     fclose(cfg);
 
-    if (cached_data.bot_token[0] != '\0' && cached_data.channel_id[0] != '\0') {
-        cached_data.config_loaded = true;
-        printf("Discord Chat: Config loaded successfully\n");
+    if (data->username[0] != '\0' && data->password[0] != '\0') {
+        data->config_loaded = true;
+        printf("Discross: Config loaded OK\n");
         return 0;
     }
 
-    printf("Discord Chat: Config incomplete (need TOKEN and CHANNEL)\n");
-    cached_data.config_loaded = false;
+    printf("Discross: Config incomplete (need USERNAME and PASSWORD)\n");
+    data->config_loaded = false;
     return -2;
 }
 
-void dchat_shutdown(void) {
-    cache_valid = false;
-}
+int dchat_login(dchat_data_t *data, uint32_t timeout_ms) {
+    if (!data || !data->config_loaded) return -1;
 
 #ifdef _arch_dreamcast
-/**
- * Perform an HTTP request to the Discord API (via proxy).
- *
- * Discord requires HTTPS which the Dreamcast doesn't natively support.
- * This function connects to an HTTP proxy/bridge (e.g., running on DreamPi)
- * that forwards requests to Discord's HTTPS API.
- *
- * The proxy should be configured to accept:
- *   GET /api/v10/channels/{id}/messages -> forwarded to discord.com
- *   POST /api/v10/channels/{id}/messages -> forwarded to discord.com
- *
- * @param method   "GET" or "POST"
- * @param path     API path (e.g., "/api/v10/channels/123/messages")
- * @param token    Bot token for Authorization header
- * @param body     POST body (NULL for GET)
- * @param response Buffer for response
- * @param buf_size Size of response buffer
- * @param timeout_ms Timeout
- * @return bytes received on success, negative on error
- */
-static int discord_http_request(const char *method, const char *path,
-                                 const char *token, const char *body,
-                                 char *response, int buf_size, uint32_t timeout_ms) {
-    int sock = -1;
-    struct hostent *host;
-    struct sockaddr_in server_addr;
-    char request_buf[1024];
-    int total_received = 0;
-    uint64_t start_time;
-
-    if (!net_default_dev) {
-        printf("Discord Chat: No network device\n");
-        return -2;
-    }
-
-    /* Create socket */
-    sock = socket(AF_INET, SOCK_STREAM, 0);
+    int sock = dchat_connect(data->host, data->port);
     if (sock < 0) {
-        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    }
-    if (sock < 0) {
-        printf("Discord Chat: Socket creation failed (errno=%d)\n", errno);
-        return -2;
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Connection failed (%d)", sock);
+        return sock;
     }
 
-    printf("Discord Chat: Socket created (fd=%d)\n", sock);
+    /* Build form-encoded POST body */
+    char enc_user[128], enc_pass[128];
+    url_encode(data->username, enc_user, sizeof(enc_user));
+    url_encode(data->password, enc_pass, sizeof(enc_pass));
 
-    /* Resolve proxy host */
-    printf("Discord Chat: Resolving %s...\n", DISCORD_PROXY_HOST);
-    host = gethostbyname(DISCORD_PROXY_HOST);
-    if (!host) {
-        printf("Discord Chat: DNS lookup failed\n");
-        close(sock);
-        return -3;
-    }
+    char body[300];
+    snprintf(body, sizeof(body), "username=%s&password=%s", enc_user, enc_pass);
+    int body_len = strlen(body);
 
-    /* Connect */
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(DISCORD_PROXY_PORT);
-    memcpy(&server_addr.sin_addr, host->h_addr, host->h_length);
+    char request[512];
+    int req_len = snprintf(request, sizeof(request),
+        "POST /login HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Content-Type: application/x-www-form-urlencoded\r\n"
+        "Content-Length: %d\r\n"
+        "User-Agent: openMenu-Dreamcast/1.2-discross\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "%s",
+        data->host, data->port, body_len, body);
 
-    printf("Discord Chat: Connecting...\n");
-    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        printf("Discord Chat: Connect failed (errno=%d)\n", errno);
-        close(sock);
-        return -4;
-    }
-
-    /* Build HTTP request */
-    if (body) {
-        int body_len = strlen(body);
-        snprintf(request_buf, sizeof(request_buf),
-                 "%s %s HTTP/1.1\r\n"
-                 "Host: %s\r\n"
-                 "Authorization: %s\r\n"
-                 "Content-Type: application/json\r\n"
-                 "Content-Length: %d\r\n"
-                 "User-Agent: openMenu-Dreamcast/1.2-dchat\r\n"
-                 "Connection: close\r\n"
-                 "\r\n"
-                 "%s",
-                 method, path, DISCORD_PROXY_HOST, token, body_len, body);
-    } else {
-        snprintf(request_buf, sizeof(request_buf),
-                 "%s %s HTTP/1.1\r\n"
-                 "Host: %s\r\n"
-                 "Authorization: %s\r\n"
-                 "User-Agent: openMenu-Dreamcast/1.2-dchat\r\n"
-                 "Connection: close\r\n"
-                 "\r\n",
-                 method, path, DISCORD_PROXY_HOST, token);
-    }
-
-    /* Send request */
-    int sent = send(sock, request_buf, strlen(request_buf), 0);
-    if (sent <= 0) {
-        printf("Discord Chat: Send failed (errno=%d)\n", errno);
-        close(sock);
-        return -5;
-    }
-
-    /* Receive response */
-    start_time = timer_ms_gettime64();
-    total_received = 0;
-
-    while (total_received < buf_size - 1) {
-        if (timer_ms_gettime64() - start_time > timeout_ms) {
-            printf("Discord Chat: Receive timeout\n");
-            break;
-        }
-
-        int received = recv(sock, response + total_received,
-                           buf_size - total_received - 1, 0);
-
-        if (received > 0) {
-            total_received += received;
-            start_time = timer_ms_gettime64();
-        } else if (received == 0) {
-            break;  /* Connection closed */
-        } else {
-            if (total_received == 0) {
-                printf("Discord Chat: Receive failed (errno=%d)\n", errno);
-                close(sock);
-                return -6;
-            }
-            break;
-        }
-
-        thd_pass();
-    }
-
-    response[total_received] = '\0';
+    char response[4096];
+    int result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
     close(sock);
 
-    printf("Discord Chat: Received %d bytes\n", total_received);
-    return (total_received > 0) ? total_received : -6;
-}
-#endif
-
-int dchat_fetch_messages(dchat_data_t *data, uint32_t timeout_ms) {
-    if (!data) return -1;
-
-    /* Preserve config across fetch */
-    char token_backup[DCHAT_MAX_TOKEN_LEN];
-    char channel_backup[DCHAT_MAX_CHANNEL_LEN];
-    bool config_backup = data->config_loaded;
-    strncpy(token_backup, data->bot_token, DCHAT_MAX_TOKEN_LEN);
-    strncpy(channel_backup, data->channel_id, DCHAT_MAX_CHANNEL_LEN);
-
-    /* Clear message data but keep config */
-    data->message_count = 0;
-    data->data_valid = false;
-    data->error_message[0] = '\0';
-
-    /* Restore config */
-    strncpy(data->bot_token, token_backup, DCHAT_MAX_TOKEN_LEN);
-    strncpy(data->channel_id, channel_backup, DCHAT_MAX_CHANNEL_LEN);
-    data->config_loaded = config_backup;
-
-    if (!data->config_loaded) {
+    if (result < 0) {
         snprintf(data->error_message, sizeof(data->error_message),
-                "No Discord config - place DISCORD.CFG on SD card");
-        return -10;
+                "Login request failed (%d)", result);
+        return result;
     }
+
+    /* Check for session cookie in response (any status - redirects have cookies) */
+    if (dchat_extract_session(response, data->session_id, DCHAT_MAX_SESSION_LEN) == 0) {
+        data->logged_in = true;
+        printf("Discross: Login OK, session=%s\n", data->session_id);
+        return 0;
+    }
+
+    /* Login failed - check status */
+    int status = dchat_http_status(response);
+    snprintf(data->error_message, sizeof(data->error_message),
+            "Login failed (HTTP %d)", status);
+    printf("Discross: Login failed, HTTP %d\n", status);
+    return -10;
+
+#else
+    /* Stub for non-DC builds */
+    strcpy(data->session_id, "stub-session");
+    data->logged_in = true;
+    return 0;
+#endif
+}
+
+int dchat_fetch_servers(dchat_data_t *data, uint32_t timeout_ms) {
+    if (!data || !data->logged_in) return -1;
 
 #ifdef _arch_dreamcast
-    if (!net_default_dev) {
+    int sock = dchat_connect(data->host, data->port);
+    if (sock < 0) {
         snprintf(data->error_message, sizeof(data->error_message),
-                "No network connection");
-        return -11;
+                "Connection failed");
+        return sock;
     }
 
-    char path[128];
-    snprintf(path, sizeof(path), "/api/v10/channels/%s/messages?limit=%d",
-             data->channel_id, DCHAT_MAX_MESSAGES);
+    char request[512];
+    int req_len = snprintf(request, sizeof(request),
+        "GET /server/ HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Cookie: sessionID=%s\r\n"
+        "User-Agent: openMenu-Dreamcast/1.2-discross\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        data->host, data->port, data->session_id);
 
     char response[8192];
-    int result = discord_http_request("GET", path, data->bot_token,
-                                       NULL, response, sizeof(response), timeout_ms);
+    int result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
+    close(sock);
 
     if (result < 0) {
-        const char *error_msg = "Unknown error";
-        switch (result) {
-            case -2: error_msg = "Socket failed"; break;
-            case -3: error_msg = "DNS failed"; break;
-            case -4: error_msg = "Connect failed"; break;
-            case -5: error_msg = "Send failed"; break;
-            case -6: error_msg = "Receive failed"; break;
-        }
         snprintf(data->error_message, sizeof(data->error_message),
-                "%s (err %d)", error_msg, result);
+                "Server list failed (%d)", result);
         return result;
     }
 
-    /* Find JSON body (skip HTTP headers) */
-    char *json_start = strstr(response, "\r\n\r\n");
-    if (!json_start) {
-        strcpy(data->error_message, "Invalid HTTP response");
-        return -7;
-    }
-    json_start += 4;
-
-    /* Check HTTP status */
-    if (strncmp(response, "HTTP/1.", 7) == 0) {
-        char *status_start = strchr(response, ' ');
-        if (status_start) {
-            int status_code = atoi(status_start + 1);
-            if (status_code != 200) {
-                snprintf(data->error_message, sizeof(data->error_message),
-                        "HTTP error %d", status_code);
-                printf("Discord Chat: HTTP %d\n", status_code);
-                return -8;
-            }
-        }
-    }
-
-    /* Parse messages */
-    int parsed = dchat_parse_messages(json_start, data);
-    if (parsed < 0) {
-        strcpy(data->error_message, "JSON parse error");
-        return -9;
-    }
-
-    /* Discord returns newest first - reverse so oldest is first for display */
-    for (int i = 0; i < data->message_count / 2; i++) {
-        int j = data->message_count - 1 - i;
-        dchat_message_t tmp;
-        memcpy(&tmp, &data->messages[i], sizeof(dchat_message_t));
-        memcpy(&data->messages[i], &data->messages[j], sizeof(dchat_message_t));
-        memcpy(&data->messages[j], &tmp, sizeof(dchat_message_t));
-    }
-
-    data->data_valid = true;
-    data->last_update_time = (uint32_t)timer_ms_gettime64();
-
-    /* Update cache */
-    memcpy(&cached_data, data, sizeof(dchat_data_t));
-    cache_valid = true;
-
-    printf("Discord Chat: Fetched %d messages\n", data->message_count);
-    return 0;
-
-#else
-    /* Non-Dreamcast stub data for testing */
-    #ifdef DCHAT_USE_STUB_DATA
-    strcpy(data->messages[0].username, "SonicFan99");
-    strcpy(data->messages[0].content, "Anyone playing PSO tonight?");
-    strcpy(data->messages[0].timestamp, "2026-02-05T20:00:00");
-
-    strcpy(data->messages[1].username, "DreamcastLive");
-    strcpy(data->messages[1].content, "Server is up! 12 players online");
-    strcpy(data->messages[1].timestamp, "2026-02-05T20:01:00");
-
-    strcpy(data->messages[2].username, "RetroGamer");
-    strcpy(data->messages[2].content, "Just got my BBA working, feels good");
-    strcpy(data->messages[2].timestamp, "2026-02-05T20:02:00");
-
-    data->message_count = 3;
-    data->data_valid = true;
-    data->last_update_time = 0;
-
-    memcpy(&cached_data, data, sizeof(dchat_data_t));
-    cache_valid = true;
-    return 0;
-    #else
-    strcpy(data->error_message, "Network not available");
-    return -100;
-    #endif
-#endif
-}
-
-int dchat_send_message(dchat_data_t *data, const char *message, uint32_t timeout_ms) {
-    if (!data || !message || message[0] == '\0') return -1;
-
-    if (!data->config_loaded) {
+    int status = dchat_http_status(response);
+    if (status == 303 || status == 302) {
         snprintf(data->error_message, sizeof(data->error_message),
-                "No Discord config");
+                "Session expired - re-login needed");
+        data->logged_in = false;
         return -10;
     }
 
-#ifdef _arch_dreamcast
-    if (!net_default_dev) {
-        snprintf(data->error_message, sizeof(data->error_message),
-                "No network connection");
-        return -11;
+    const char *body = dchat_http_body(response);
+    if (!body) {
+        strcpy(data->error_message, "Invalid response");
+        return -7;
     }
 
-    char path[128];
-    snprintf(path, sizeof(path), "/api/v10/channels/%s/messages",
-             data->channel_id);
+    /* Parse server list from HTML.
+     * Server links look like: href="./SNOWFLAKE_ID"
+     * Server names are in alt="NAME" or title="NAME" on the icon images */
+    data->server_count = 0;
+    const char *pos = body;
 
-    /* Build JSON body - escape special characters in the message */
-    char body[512];
-    char escaped_msg[300];
-    int ei = 0;
-    for (int i = 0; message[i] && ei < (int)sizeof(escaped_msg) - 2; i++) {
-        if (message[i] == '"') {
-            escaped_msg[ei++] = '\\';
-            escaped_msg[ei++] = '"';
-        } else if (message[i] == '\\') {
-            escaped_msg[ei++] = '\\';
-            escaped_msg[ei++] = '\\';
-        } else if (message[i] == '\n') {
-            escaped_msg[ei++] = '\\';
-            escaped_msg[ei++] = 'n';
-        } else {
-            escaped_msg[ei++] = message[i];
+    while (data->server_count < DCHAT_MAX_SERVERS) {
+        /* Find server link: href="./ followed by a numeric ID */
+        const char *href = strstr(pos, "href=\"./");
+        if (!href) break;
+        href += 7;  /* skip href="./ */
+
+        /* Extract server ID (digits only) */
+        char id_buf[DCHAT_MAX_ID_LEN];
+        int i = 0;
+        while (href[i] && href[i] != '"' && href[i] != '/' && i < DCHAT_MAX_ID_LEN - 1) {
+            id_buf[i] = href[i];
+            i++;
         }
-    }
-    escaped_msg[ei] = '\0';
+        id_buf[i] = '\0';
 
-    snprintf(body, sizeof(body), "{\"content\":\"%s\"}", escaped_msg);
+        /* Validate it looks like a Discord snowflake (all digits, > 10 chars) */
+        if (i < 10) {
+            pos = href + i;
+            continue;
+        }
+        bool all_digits = true;
+        for (int j = 0; j < i; j++) {
+            if (id_buf[j] < '0' || id_buf[j] > '9') { all_digits = false; break; }
+        }
+        if (!all_digits) {
+            pos = href + i;
+            continue;
+        }
 
-    char response[2048];
-    int result = discord_http_request("POST", path, data->bot_token,
-                                       body, response, sizeof(response), timeout_ms);
+        strcpy(data->servers[data->server_count].id, id_buf);
 
-    if (result < 0) {
-        snprintf(data->error_message, sizeof(data->error_message),
-                "Send failed (err %d)", result);
-        return result;
-    }
-
-    /* Check HTTP status */
-    char *json_start = strstr(response, "\r\n\r\n");
-    if (json_start && strncmp(response, "HTTP/1.", 7) == 0) {
-        char *status_start = strchr(response, ' ');
-        if (status_start) {
-            int status_code = atoi(status_start + 1);
-            if (status_code != 200 && status_code != 201) {
-                snprintf(data->error_message, sizeof(data->error_message),
-                        "Send HTTP error %d", status_code);
-                return -8;
+        /* Try to find server name in alt="..." or title="..." nearby */
+        const char *alt = strstr(href, "alt=\"");
+        const char *next_href = strstr(href + 1, "href=\"./");
+        if (alt && (!next_href || alt < next_href)) {
+            alt += 5;
+            int ni = 0;
+            while (alt[ni] && alt[ni] != '"' && ni < DCHAT_MAX_NAME_LEN - 1) {
+                data->servers[data->server_count].name[ni] = alt[ni];
+                ni++;
             }
+            data->servers[data->server_count].name[ni] = '\0';
+            html_decode_inplace(data->servers[data->server_count].name);
+        } else {
+            /* Fallback: use the ID as the name */
+            snprintf(data->servers[data->server_count].name, DCHAT_MAX_NAME_LEN,
+                    "Server %s", id_buf);
         }
+
+        printf("Discross: Server [%d] %s = %s\n", data->server_count,
+               data->servers[data->server_count].id,
+               data->servers[data->server_count].name);
+
+        data->server_count++;
+        pos = href + i;
     }
 
-    printf("Discord Chat: Message sent successfully\n");
+    printf("Discross: Found %d servers\n", data->server_count);
     return 0;
 
 #else
-    printf("Discord Chat: [STUB] Would send: %s\n", message);
+    /* Stub data */
+    strcpy(data->servers[0].id, "123456789012345678");
+    strcpy(data->servers[0].name, "Test Server");
+    data->server_count = 1;
     return 0;
 #endif
 }
 
-bool dchat_get_cached_data(dchat_data_t *data) {
-    if (!data || !cache_valid) return false;
-    memcpy(data, &cached_data, sizeof(dchat_data_t));
-    return true;
+int dchat_fetch_channels(dchat_data_t *data, const char *server_id, uint32_t timeout_ms) {
+    if (!data || !data->logged_in || !server_id) return -1;
+
+    strncpy(data->current_server_id, server_id, DCHAT_MAX_ID_LEN - 1);
+
+#ifdef _arch_dreamcast
+    int sock = dchat_connect(data->host, data->port);
+    if (sock < 0) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Connection failed");
+        return sock;
+    }
+
+    char request[512];
+    int req_len = snprintf(request, sizeof(request),
+        "GET /server/%s HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Cookie: sessionID=%s\r\n"
+        "User-Agent: openMenu-Dreamcast/1.2-discross\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        server_id, data->host, data->port, data->session_id);
+
+    char response[8192];
+    int result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
+    close(sock);
+
+    if (result < 0) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Channel list failed (%d)", result);
+        return result;
+    }
+
+    const char *body = dchat_http_body(response);
+    if (!body) {
+        strcpy(data->error_message, "Invalid response");
+        return -7;
+    }
+
+    /* Parse channel links from HTML.
+     * Channel links look like: href="../channels/CHANNEL_ID#end"
+     * or href="/channels/CHANNEL_ID#end"
+     * Channel names are in the link text, often preceded by # */
+    data->channel_count = 0;
+    const char *pos = body;
+
+    while (data->channel_count < DCHAT_MAX_CHANNELS) {
+        /* Find channel link */
+        const char *channels_str = strstr(pos, "channels/");
+        if (!channels_str) break;
+        channels_str += 9;  /* skip "channels/" */
+
+        /* Extract channel ID */
+        char id_buf[DCHAT_MAX_ID_LEN];
+        int i = 0;
+        while (channels_str[i] && channels_str[i] != '#' && channels_str[i] != '"'
+               && channels_str[i] != '/' && i < DCHAT_MAX_ID_LEN - 1) {
+            id_buf[i] = channels_str[i];
+            i++;
+        }
+        id_buf[i] = '\0';
+
+        /* Validate snowflake */
+        if (i < 10) { pos = channels_str + i; continue; }
+        bool all_digits = true;
+        for (int j = 0; j < i; j++) {
+            if (id_buf[j] < '0' || id_buf[j] > '9') { all_digits = false; break; }
+        }
+        if (!all_digits) { pos = channels_str + i; continue; }
+
+        /* Check for duplicate (same ID already found) */
+        bool dup = false;
+        for (int j = 0; j < data->channel_count; j++) {
+            if (strcmp(data->channels[j].id, id_buf) == 0) { dup = true; break; }
+        }
+        if (dup) { pos = channels_str + i; continue; }
+
+        strcpy(data->channels[data->channel_count].id, id_buf);
+
+        /* Try to find channel name: look for ">" after the closing quote, take text until "<" */
+        const char *close_tag = strchr(channels_str, '>');
+        if (close_tag) {
+            close_tag++;
+            int ni = 0;
+            /* Skip leading # and whitespace */
+            while (*close_tag == '#' || *close_tag == ' ') close_tag++;
+            while (close_tag[ni] && close_tag[ni] != '<' && ni < DCHAT_MAX_NAME_LEN - 1) {
+                data->channels[data->channel_count].name[ni] = close_tag[ni];
+                ni++;
+            }
+            data->channels[data->channel_count].name[ni] = '\0';
+            html_decode_inplace(data->channels[data->channel_count].name);
+            strip_html_tags(data->channels[data->channel_count].name);
+
+            /* Trim trailing whitespace */
+            while (ni > 0 && (data->channels[data->channel_count].name[ni - 1] == ' ' ||
+                              data->channels[data->channel_count].name[ni - 1] == '\n')) {
+                data->channels[data->channel_count].name[--ni] = '\0';
+            }
+        }
+
+        /* Fallback name */
+        if (data->channels[data->channel_count].name[0] == '\0') {
+            snprintf(data->channels[data->channel_count].name, DCHAT_MAX_NAME_LEN,
+                    "#%s", id_buf);
+        }
+
+        printf("Discross: Channel [%d] %s = %s\n", data->channel_count,
+               data->channels[data->channel_count].id,
+               data->channels[data->channel_count].name);
+
+        data->channel_count++;
+        pos = channels_str + i;
+    }
+
+    printf("Discross: Found %d channels\n", data->channel_count);
+    return 0;
+
+#else
+    strcpy(data->channels[0].id, "987654321098765432");
+    strcpy(data->channels[0].name, "general");
+    strcpy(data->channels[1].id, "987654321098765433");
+    strcpy(data->channels[1].name, "dreamcast-chat");
+    data->channel_count = 2;
+    return 0;
+#endif
 }
 
-void dchat_clear_cache(void) {
-    memset(&cached_data.messages, 0, sizeof(cached_data.messages));
-    cached_data.message_count = 0;
-    cached_data.data_valid = false;
-    cache_valid = false;
+int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t timeout_ms) {
+    if (!data || !data->logged_in || !channel_id) return -1;
+
+    strncpy(data->current_channel_id, channel_id, DCHAT_MAX_ID_LEN - 1);
+
+#ifdef _arch_dreamcast
+    int sock = dchat_connect(data->host, data->port);
+    if (sock < 0) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Connection failed");
+        return sock;
+    }
+
+    char request[512];
+    int req_len = snprintf(request, sizeof(request),
+        "GET /channels/%s HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Cookie: sessionID=%s\r\n"
+        "User-Agent: openMenu-Dreamcast/1.2-discross\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        channel_id, data->host, data->port, data->session_id);
+
+    /* Messages page can be large - allocate on heap */
+    char *response = (char *)malloc(16384);
+    if (!response) {
+        strcpy(data->error_message, "Out of memory");
+        close(sock);
+        return -20;
+    }
+
+    int result = dchat_http_exchange(sock, request, req_len, response, 16384, timeout_ms);
+    close(sock);
+
+    if (result < 0) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Message fetch failed (%d)", result);
+        free(response);
+        return result;
+    }
+
+    const char *body = dchat_http_body(response);
+    if (!body) {
+        strcpy(data->error_message, "Invalid response");
+        free(response);
+        return -7;
+    }
+
+    /* Parse messages from Discross HTML.
+     * Discross renders messages in <table> elements:
+     *   <th>Username</th> ... message content in subsequent <td> elements
+     * The structure is: <table><tr><th rowspan=N>Username</th></tr>
+     *   <tr><td>message text</td></tr>
+     *   ...
+     * </table>
+     *
+     * We look for <th> tags for usernames and nearby content for messages.
+     */
+    data->message_count = 0;
+    const char *pos = body;
+    char current_user[DCHAT_MAX_NAME_LEN] = "";
+
+    while (data->message_count < DCHAT_MAX_MESSAGES) {
+        /* Look for either <th (username header) or message content after a username */
+        const char *th_tag = strstr(pos, "<th");
+        const char *td_tag = strstr(pos, "<td");
+
+        /* If we find a <th> before the next <td>, extract username */
+        if (th_tag && (!td_tag || th_tag < td_tag)) {
+            const char *th_close = strchr(th_tag, '>');
+            if (!th_close) break;
+            th_close++;
+
+            /* Extract username text (between > and </th>) */
+            const char *th_end = strstr(th_close, "</th>");
+            if (!th_end) break;
+
+            int len = (int)(th_end - th_close);
+            if (len > 0 && len < DCHAT_MAX_NAME_LEN) {
+                memcpy(current_user, th_close, len);
+                current_user[len] = '\0';
+                strip_html_tags(current_user);
+                html_decode_inplace(current_user);
+                /* Trim whitespace */
+                while (current_user[0] == ' ' || current_user[0] == '\n') {
+                    memmove(current_user, current_user + 1, strlen(current_user));
+                }
+                int ulen = strlen(current_user);
+                while (ulen > 0 && (current_user[ulen - 1] == ' ' || current_user[ulen - 1] == '\n')) {
+                    current_user[--ulen] = '\0';
+                }
+            }
+
+            pos = th_end + 5;
+            continue;
+        }
+
+        /* Extract message from <td> */
+        if (td_tag) {
+            const char *td_close = strchr(td_tag, '>');
+            if (!td_close) break;
+            td_close++;
+
+            /* Find end of <td> content */
+            const char *td_end = strstr(td_close, "</td>");
+            if (!td_end) break;
+
+            int len = (int)(td_end - td_close);
+            if (len > 0 && current_user[0] != '\0' && len < DCHAT_MAX_CONTENT_LEN) {
+                dchat_message_t *msg = &data->messages[data->message_count];
+
+                strncpy(msg->username, current_user, DCHAT_MAX_NAME_LEN - 1);
+                msg->username[DCHAT_MAX_NAME_LEN - 1] = '\0';
+
+                /* Copy content, strip HTML tags, decode entities */
+                int copy_len = (len < DCHAT_MAX_CONTENT_LEN - 1) ? len : DCHAT_MAX_CONTENT_LEN - 1;
+                memcpy(msg->content, td_close, copy_len);
+                msg->content[copy_len] = '\0';
+                strip_html_tags(msg->content);
+                html_decode_inplace(msg->content);
+
+                /* Trim whitespace */
+                char *c = msg->content;
+                while (*c == ' ' || *c == '\n' || *c == '\r' || *c == '\t') {
+                    memmove(c, c + 1, strlen(c));
+                }
+                int clen = strlen(msg->content);
+                while (clen > 0 && (msg->content[clen - 1] == ' ' || msg->content[clen - 1] == '\n')) {
+                    msg->content[--clen] = '\0';
+                }
+
+                /* Only count if there's actual content */
+                if (msg->content[0] != '\0') {
+                    data->message_count++;
+                }
+            }
+
+            pos = td_end + 5;
+            continue;
+        }
+
+        break;  /* No more <th> or <td> found */
+    }
+
+    data->messages_valid = true;
+    free(response);
+    printf("Discross: Parsed %d messages\n", data->message_count);
+    return 0;
+
+#else
+    /* Stub data */
+    strcpy(data->messages[0].username, "SonicFan99");
+    strcpy(data->messages[0].content, "Anyone playing PSO tonight?");
+    strcpy(data->messages[1].username, "DreamcastLive");
+    strcpy(data->messages[1].content, "Server is up! 12 players online");
+    strcpy(data->messages[2].username, "RetroGamer");
+    strcpy(data->messages[2].content, "Just got my BBA working");
+    data->message_count = 3;
+    data->messages_valid = true;
+    return 0;
+#endif
+}
+
+int dchat_send_message(dchat_data_t *data, const char *channel_id,
+                       const char *message, uint32_t timeout_ms) {
+    if (!data || !data->logged_in || !channel_id || !message || message[0] == '\0') return -1;
+
+#ifdef _arch_dreamcast
+    int sock = dchat_connect(data->host, data->port);
+    if (sock < 0) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Connection failed");
+        return sock;
+    }
+
+    /* URL-encode the message */
+    char enc_msg[512];
+    url_encode(message, enc_msg, sizeof(enc_msg));
+
+    /* Discross uses GET /send?message=...&channel=... */
+    char request[1024];
+    int req_len = snprintf(request, sizeof(request),
+        "GET /send?message=%s&channel=%s HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Cookie: sessionID=%s\r\n"
+        "User-Agent: openMenu-Dreamcast/1.2-discross\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        enc_msg, channel_id, data->host, data->port, data->session_id);
+
+    char response[2048];
+    int result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
+    close(sock);
+
+    if (result < 0) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Send failed (%d)", result);
+        return result;
+    }
+
+    /* Discross returns 302 redirect on success */
+    int status = dchat_http_status(response);
+    if (status == 302 || status == 303 || status == 200) {
+        printf("Discross: Message sent OK (HTTP %d)\n", status);
+        return 0;
+    }
+
+    snprintf(data->error_message, sizeof(data->error_message),
+            "Send failed (HTTP %d)", status);
+    return -10;
+
+#else
+    printf("Discross: [STUB] Would send to %s: %s\n", channel_id, message);
+    return 0;
+#endif
 }
 
 bool dchat_network_available(void) {
 #ifdef _arch_dreamcast
     return (net_default_dev != NULL);
 #else
-    return false;
+    return true;  /* Always available for stub/testing */
 #endif
+}
+
+void dchat_shutdown(dchat_data_t *data) {
+    if (data) {
+        memset(data->session_id, 0, sizeof(data->session_id));
+        data->logged_in = false;
+    }
 }
