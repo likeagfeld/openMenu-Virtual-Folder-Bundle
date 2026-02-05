@@ -85,14 +85,12 @@ static int try_serial_coders_cable(void) {
 
     update_status("Checking for serial cable...");
 
-    /* Initialize SCIF hardware first */
-    scif_init();
-
-    /* Disable IRQ-based SCIF (use polling mode for AT commands) */
-    scif_set_irq_usage(0);
-
-    /* Set baud rate to 115200 */
-    scif_set_parameters(115200, 1);
+    /*
+     * Don't call scif_init() here - ppp_scif_init() will handle full SCIF setup.
+     * Just configure parameters for AT handshake.
+     */
+    scif_set_irq_usage(0);  /* Disable IRQ mode for polling */
+    scif_set_parameters(115200, 1);  /* 115200 baud, FIFO enabled */
 
     /* Flush any pending data */
     timer_spin_sleep(200);
@@ -183,7 +181,10 @@ static int try_serial_coders_cable(void) {
 
     /* Connection established - wait for DreamPi to start pppd */
     update_status("Connected! Waiting for PPP...");
-    timer_spin_sleep(5000);  /* 5 second delay as specified */
+    timer_spin_sleep(6000);  /* 6 seconds to ensure pppd is ready */
+
+    /* Flush any remaining data in buffer before PPP takes over */
+    while (scif_read() != -1) { /* drain buffer */ }
 
     /* Initialize PPP subsystem */
     if (ppp_init() < 0) {
