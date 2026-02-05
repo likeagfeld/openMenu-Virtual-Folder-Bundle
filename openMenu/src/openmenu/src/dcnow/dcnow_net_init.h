@@ -2,6 +2,14 @@
 #define DCNOW_NET_INIT_H
 
 /**
+ * Connection method for DC Now network initialization
+ */
+typedef enum {
+    DCNOW_CONN_SERIAL = 0,  /* Serial coders cable (115200 baud) */
+    DCNOW_CONN_MODEM = 1    /* Modem dial-up (DreamPi) */
+} dcnow_connection_method_t;
+
+/**
  * Status callback for network initialization
  * Called during network init to provide visual feedback
  * @param message - Status message to display (e.g., "Dialing modem...")
@@ -15,33 +23,33 @@ typedef void (*dcnow_status_callback_t)(const char* message);
 void dcnow_set_status_callback(dcnow_status_callback_t callback);
 
 /**
- * Initialize network for DreamPi or BBA with automatic connection
+ * Initialize network using specified connection method
  *
- * Based on ClassiCube's proven implementation approach.
+ * @param method - DCNOW_CONN_SERIAL for serial cable, DCNOW_CONN_MODEM for modem
  *
- * This function tries connection methods in order:
- * 1. BBA - Checks if Broadband Adapter is already active
- * 2. Serial Coders Cable - Tries serial connection at 115200 baud
+ * For Serial (DCNOW_CONN_SERIAL):
+ *    - Uses SCIF at 115200 baud
  *    - Sends "AT\r\n" and waits for "OK\r\n" (DreamPi 2 detection)
  *    - Sends "ATDT\r\n" dial command
  *    - Waits for "CONNECT 115200\r\n"
  *    - Waits 5 seconds for DreamPi to start pppd
  *    - Establishes PPP over SCIF
- * 3. Modem Dial-up - Falls back to traditional modem connection
+ *
+ * For Modem (DCNOW_CONN_MODEM):
  *    - modem_init() - Initialize modem hardware
  *    - ppp_modem_init("111-1111", 1, NULL) - Dial DreamPi
  *    - ppp_set_login("dream", "dreamcast") - Set auth credentials
  *    - ppp_connect() - Establish PPP connection
  *
- * This should be called early in main() before any network operations
+ * Note: BBA is always checked first regardless of method.
  *
- * @return 0 on success, negative on error:
- *         -1: Modem hardware initialization failed
- *         -2: PPP subsystem init failed
- *         -3: ppp_modem_init failed (dial failed)
- *         -4: ppp_set_login failed
- *         -5: ppp_connect failed
- *         -6: PPP connection timeout (40 seconds)
+ * @return 0 on success, negative on error
+ */
+int dcnow_net_init_with_method(dcnow_connection_method_t method);
+
+/**
+ * Initialize network (legacy - tries serial first, then modem)
+ * @deprecated Use dcnow_net_init_with_method() instead
  */
 int dcnow_net_early_init(void);
 

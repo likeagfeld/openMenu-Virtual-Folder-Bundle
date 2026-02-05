@@ -2921,13 +2921,15 @@ static const char* get_product_id_from_api_code(const char* api_code) {
 }
 
 typedef enum {
-    DCNOW_VIEW_GAMES,    /* Showing list of games */
-    DCNOW_VIEW_PLAYERS   /* Showing list of players for selected game */
+    DCNOW_VIEW_CONNECTION_SELECT,  /* Choosing connection method (Serial/Modem) */
+    DCNOW_VIEW_GAMES,              /* Showing list of games */
+    DCNOW_VIEW_PLAYERS             /* Showing list of players for selected game */
 } dcnow_view_t;
 
 static dcnow_data_t dcnow_data;
 static dcnow_view_t dcnow_view = DCNOW_VIEW_GAMES;
 static int dcnow_choice = 0;
+static int dcnow_conn_choice = 0;  /* Connection method: 0=Serial, 1=Modem */
 static int dcnow_scroll_offset = 0;  /* Scroll offset for viewing large game lists */
 static int dcnow_selected_game = -1; /* Index of selected game for player view */
 static bool dcnow_data_fetched = false;
@@ -3125,12 +3127,18 @@ handle_input_dcnow(enum control input) {
 
     switch (input) {
         case A: {
-            /* A button: Connect / Fetch data / Drill down into game */
-            if (!dcnow_net_initialized) {
-                /* Connect to DreamPi */
-                printf("DC Now: Starting connection...\n");
+            /* A button: Show connection menu / Connect / Fetch data / Drill down */
+            if (!dcnow_net_initialized && dcnow_view != DCNOW_VIEW_CONNECTION_SELECT) {
+                /* Show connection method selection */
+                dcnow_view = DCNOW_VIEW_CONNECTION_SELECT;
+                dcnow_conn_choice = 0;  /* Default to Serial */
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+            } else if (dcnow_view == DCNOW_VIEW_CONNECTION_SELECT) {
+                /* User selected a connection method - connect now */
+                printf("DC Now: Starting connection with method %d...\n", dcnow_conn_choice);
                 dcnow_set_status_callback(dcnow_connection_status_callback);
-                int net_result = dcnow_net_early_init();
+                int net_result = dcnow_net_init_with_method(
+                    dcnow_conn_choice == 0 ? DCNOW_CONN_SERIAL : DCNOW_CONN_MODEM);
                 dcnow_set_status_callback(NULL);
 
                 if (net_result < 0) {
@@ -3139,8 +3147,7 @@ handle_input_dcnow(enum control input) {
                     snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
                             "Connection failed (error %d). Press A to retry", net_result);
                     dcnow_data.data_valid = false;
-                    /* Don't set dcnow_net_initialized = true on failure! */
-                    /* User needs to be able to retry connection */
+                    dcnow_view = DCNOW_VIEW_GAMES;  /* Back to main view to show error */
                 } else {
                     printf("DC Now: Connection successful\n");
                     dcnow_net_initialized = true;
@@ -3148,7 +3155,9 @@ handle_input_dcnow(enum control input) {
                     snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
                             "Connected! Press X to fetch data");
                     dcnow_data.data_valid = false;
+                    dcnow_view = DCNOW_VIEW_GAMES;
                 }
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
             } else if (!dcnow_data.data_valid) {
                 /* Fetch initial data */
                 printf("DC Now: Requesting initial fetch...\n");
@@ -3190,7 +3199,14 @@ handle_input_dcnow(enum control input) {
         } break;
         case B: {
             /* B button: Back or Close */
-            printf("DC Now: B pressed, view=%d (0=GAMES, 1=PLAYERS)\n", dcnow_view);
+            printf("DC Now: B pressed, view=%d (0=CONN_SELECT, 1=GAMES, 2=PLAYERS)\n", dcnow_view);
+            if (dcnow_view == DCNOW_VIEW_CONNECTION_SELECT) {
+                /* Cancel connection selection, go back to games view */
+                printf("DC Now: Canceling connection selection\n");
+                dcnow_view = DCNOW_VIEW_GAMES;
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+                return;
+            }
             if (dcnow_view == DCNOW_VIEW_PLAYERS) {
                 /* Go back to game list */
                 printf("DC Now: Going back to game list\n");
@@ -3218,8 +3234,12 @@ handle_input_dcnow(enum control input) {
             /* START button: Do nothing (let it close the menu naturally) */
         } break;
         case UP: {
-            /* Scroll up */
-            if (dcnow_choice > 0) {
+            /* Scroll up / Change connection selection */
+            if (dcnow_view == DCNOW_VIEW_CONNECTION_SELECT) {
+                /* Toggle between Serial (0) and Modem (1) */
+                dcnow_conn_choice = (dcnow_conn_choice == 0) ? 1 : 0;
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+            } else if (dcnow_choice > 0) {
                 dcnow_choice--;
                 /* Adjust scroll offset if selection goes above visible area */
                 if (dcnow_choice < dcnow_scroll_offset) {
@@ -3231,32 +3251,38 @@ handle_input_dcnow(enum control input) {
             }
         } break;
         case DOWN: {
-            /* Scroll down */
-            int max_items = 0;
-            int total_items = 0;
-            if (dcnow_view == DCNOW_VIEW_GAMES && dcnow_data.data_valid) {
-                total_items = dcnow_data.game_count;
-                max_items = total_items - 1;
-            } else if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0) {
-                total_items = dcnow_data.games[dcnow_selected_game].player_count;
-                max_items = total_items - 1;
-            }
-
-            if (total_items > 0 && dcnow_choice < max_items) {
-                dcnow_choice++;
-                /* Adjust scroll offset if selection goes below visible area */
-                int max_visible = (sf_ui[0] == UI_SCROLL || sf_ui[0] == UI_FOLDERS) ? 10 : 8;
-                if (dcnow_choice >= dcnow_scroll_offset + max_visible) {
-                    dcnow_scroll_offset = dcnow_choice - max_visible + 1;
-                }
-                /* Ensure scroll offset doesn't go negative */
-                if (dcnow_scroll_offset < 0) {
-                    dcnow_scroll_offset = 0;
-                }
-                printf("DC Now: DOWN - choice=%d, scroll_offset=%d, max_items=%d\n",
-                       dcnow_choice, dcnow_scroll_offset, max_items);
-                /* Set timeout after navigation to prevent skipping */
+            /* Scroll down / Change connection selection */
+            if (dcnow_view == DCNOW_VIEW_CONNECTION_SELECT) {
+                /* Toggle between Serial (0) and Modem (1) */
+                dcnow_conn_choice = (dcnow_conn_choice == 0) ? 1 : 0;
                 if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+            } else {
+                int max_items = 0;
+                int total_items = 0;
+                if (dcnow_view == DCNOW_VIEW_GAMES && dcnow_data.data_valid) {
+                    total_items = dcnow_data.game_count;
+                    max_items = total_items - 1;
+                } else if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0) {
+                    total_items = dcnow_data.games[dcnow_selected_game].player_count;
+                    max_items = total_items - 1;
+                }
+
+                if (total_items > 0 && dcnow_choice < max_items) {
+                    dcnow_choice++;
+                    /* Adjust scroll offset if selection goes below visible area */
+                    int max_visible = (sf_ui[0] == UI_SCROLL || sf_ui[0] == UI_FOLDERS) ? 10 : 8;
+                    if (dcnow_choice >= dcnow_scroll_offset + max_visible) {
+                        dcnow_scroll_offset = dcnow_choice - max_visible + 1;
+                    }
+                    /* Ensure scroll offset doesn't go negative */
+                    if (dcnow_scroll_offset < 0) {
+                        dcnow_scroll_offset = 0;
+                    }
+                    printf("DC Now: DOWN - choice=%d, scroll_offset=%d, max_items=%d\n",
+                           dcnow_choice, dcnow_scroll_offset, max_items);
+                    /* Set timeout after navigation to prevent skipping */
+                    if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+                }
             }
         } break;
         case TRIG_L:
@@ -3625,6 +3651,36 @@ draw_dcnow_tr(void) {
                 }
                 }
             }
+        } else if (dcnow_view == DCNOW_VIEW_CONNECTION_SELECT) {
+            /* Connection method selection menu */
+            font_bmp_set_color(0xFF00DDFF);  /* Cyan header */
+            font_bmp_draw_main(x_item, cur_y, "Select Connection Method:");
+            cur_y += line_height + 4;
+
+            /* Serial option */
+            if (dcnow_conn_choice == 0) {
+                font_bmp_set_color(0xFFFF8800);  /* Bright orange when selected */
+                font_bmp_draw_main(x_item, cur_y, "> Serial (Coders Cable)");
+            } else {
+                font_bmp_set_color(text_color);
+                font_bmp_draw_main(x_item, cur_y, "  Serial (Coders Cable)");
+            }
+            cur_y += line_height;
+
+            /* Modem option */
+            if (dcnow_conn_choice == 1) {
+                font_bmp_set_color(0xFFFF8800);  /* Bright orange when selected */
+                font_bmp_draw_main(x_item, cur_y, "> Modem (Dial-up)");
+            } else {
+                font_bmp_set_color(text_color);
+                font_bmp_draw_main(x_item, cur_y, "  Modem (Dial-up)");
+            }
+            cur_y += line_height + 8;
+
+            /* Instructions */
+            font_bmp_set_color(0xFFBBBBBB);
+            font_bmp_draw_main(x_item, cur_y, "UP/DOWN=Select  A=Connect  B=Cancel");
+            cur_y += line_height;
         } else {
             /* Show error message or connection prompt */
             font_bmp_set_color(text_color);
@@ -3972,6 +4028,31 @@ draw_dcnow_tr(void) {
                 }
                 }
             }
+        } else if (dcnow_view == DCNOW_VIEW_CONNECTION_SELECT) {
+            /* Connection method selection menu */
+            cur_y += line_height;
+            font_bmf_draw(x_item, cur_y, 0xFF00DDFF, "Select Connection Method:");  /* Cyan header */
+            cur_y += line_height + 6;
+
+            /* Serial option */
+            if (dcnow_conn_choice == 0) {
+                font_bmf_draw(x_item, cur_y, 0xFFFF8800, "> Serial (Coders Cable)");  /* Bright orange */
+            } else {
+                font_bmf_draw(x_item, cur_y, text_color, "  Serial (Coders Cable)");
+            }
+            cur_y += line_height;
+
+            /* Modem option */
+            if (dcnow_conn_choice == 1) {
+                font_bmf_draw(x_item, cur_y, 0xFFFF8800, "> Modem (Dial-up)");  /* Bright orange */
+            } else {
+                font_bmf_draw(x_item, cur_y, text_color, "  Modem (Dial-up)");
+            }
+            cur_y += line_height + 10;
+
+            /* Instructions */
+            font_bmf_draw(x_item, cur_y, 0xFFBBBBBB, "UP/DOWN=Select  A=Connect  B=Cancel");
+            cur_y += line_height;
         } else {
             /* Error or connection prompt */
             cur_y += line_height;
@@ -3992,7 +4073,9 @@ draw_dcnow_tr(void) {
 
         /* Instructions with stunning Dreamcast button color-coding */
         int instr_x = x_item;
-        if (dcnow_view == DCNOW_VIEW_PLAYERS) {
+        if (dcnow_view == DCNOW_VIEW_CONNECTION_SELECT) {
+            /* Connection selection - no additional instructions needed */
+        } else if (dcnow_view == DCNOW_VIEW_PLAYERS) {
             /* B button - BLUE */
             font_bmf_draw(instr_x, cur_y, 0xFF3399FF, "B");
             instr_x += 12;

@@ -249,37 +249,19 @@ static int try_serial_coders_cable(void) {
 #endif
 }
 
-int dcnow_net_early_init(void) {
+/**
+ * Connect using modem dial-up only (no serial attempt)
+ */
+static int try_modem_dialup(void) {
 #ifdef _arch_dreamcast
-    update_status("Initializing network...");
-
-    /* Check if BBA is already active (like ClassiCube does) */
-    if (net_default_dev) {
-        update_status("Network ready (BBA detected)");
-        return 0;  /* BBA already active, we're done */
-    }
-
-    /* Try serial coders cable first (faster than modem dial-up) */
-    int serial_result = try_serial_coders_cable();
-    if (serial_result == 0) {
-        return 0;  /* Serial connection successful */
-    }
-    printf("DC Now: Serial cable not detected, trying modem...\n");
-
-    /* Give system time to settle after serial detection before modem init */
-    timer_spin_sleep(500);
-
-    /* No BBA or serial - try modem initialization (DreamPi dial-up) */
-    update_status("Initializing modem...");
-
     /* Initialize modem hardware */
+    update_status("Initializing modem...");
     if (!modem_init()) {
         update_status("Modem init failed!");
         return -1;
     }
 
     /* Force 14400 baud for faster connection */
-    /* MODEM_MODE_REMOTE = 0, MODEM_SPEED_V8_14400 = 0x86 */
     update_status("Setting modem speed to 14400...");
     modem_set_mode(0 /* MODEM_MODE_REMOTE */, 0x86 /* MODEM_SPEED_V8_14400 */);
 
@@ -314,11 +296,59 @@ int dcnow_net_early_init(void) {
         return -5;
     }
 
-    /* ppp_connect() is BLOCKING - returns when connection is established */
     update_status("Connected!");
-    printf("DC Now: ppp_connect() succeeded\n");
-
+    printf("DC Now: Modem connection established!\n");
     return 0;
+
+#else
+    return -1;
+#endif
+}
+
+int dcnow_net_init_with_method(dcnow_connection_method_t method) {
+#ifdef _arch_dreamcast
+    update_status("Initializing network...");
+
+    /* Check if BBA is already active */
+    if (net_default_dev) {
+        update_status("Network ready (BBA detected)");
+        return 0;  /* BBA already active, we're done */
+    }
+
+    /* Use the specified connection method */
+    if (method == DCNOW_CONN_SERIAL) {
+        return try_serial_coders_cable();
+    } else {
+        return try_modem_dialup();
+    }
+
+#else
+    return -1;
+#endif
+}
+
+int dcnow_net_early_init(void) {
+#ifdef _arch_dreamcast
+    update_status("Initializing network...");
+
+    /* Check if BBA is already active (like ClassiCube does) */
+    if (net_default_dev) {
+        update_status("Network ready (BBA detected)");
+        return 0;  /* BBA already active, we're done */
+    }
+
+    /* Try serial coders cable first (faster than modem dial-up) */
+    int serial_result = try_serial_coders_cable();
+    if (serial_result == 0) {
+        return 0;  /* Serial connection successful */
+    }
+    printf("DC Now: Serial cable not detected, trying modem...\n");
+
+    /* Give system time to settle after serial detection before modem init */
+    timer_spin_sleep(500);
+
+    /* No BBA or serial - try modem */
+    return try_modem_dialup();
 
 #else
     /* Non-Dreamcast - no network */
