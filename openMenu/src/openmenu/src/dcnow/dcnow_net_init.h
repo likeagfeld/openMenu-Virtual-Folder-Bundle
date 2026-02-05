@@ -2,6 +2,14 @@
 #define DCNOW_NET_INIT_H
 
 /**
+ * Connection method for DC Now network initialization
+ */
+typedef enum {
+    DCNOW_CONN_SERIAL = 0,  /* Serial coders cable (115200 baud) */
+    DCNOW_CONN_MODEM = 1    /* Modem dial-up (DreamPi) */
+} dcnow_connection_method_t;
+
+/**
  * Status callback for network initialization
  * Called during network init to provide visual feedback
  * @param message - Status message to display (e.g., "Dialing modem...")
@@ -15,49 +23,53 @@ typedef void (*dcnow_status_callback_t)(const char* message);
 void dcnow_set_status_callback(dcnow_status_callback_t callback);
 
 /**
- * Initialize network for DreamPi or BBA with automatic modem dialing
+ * Initialize network using specified connection method
  *
- * Based on ClassiCube's proven implementation approach.
+ * @param method - DCNOW_CONN_SERIAL for serial cable, DCNOW_CONN_MODEM for modem
  *
- * This function:
- * - Checks if BBA is already active (net_default_dev exists)
- * - For BBA: Returns immediately (already initialized)
- * - For DreamPi/modem: Automatically dials and establishes PPP connection using:
- *   1. modem_init() - Initialize modem hardware (FIRST!)
- *   2. ppp_init() - Initialize PPP subsystem
- *   3. ppp_modem_init("111-1111", 1, NULL) - Dial DreamPi (~20 seconds)
- *   4. ppp_set_login("dream", "dreamcast") - Set auth credentials
- *   5. ppp_connect() - Establish connection (~20 seconds)
- *   6. Waits up to 40 seconds for link up
+ * For Serial (DCNOW_CONN_SERIAL):
+ *    - Uses SCIF at 115200 baud
+ *    - Sends "AT\r\n" and waits for "OK\r\n" (DreamPi 2 detection)
+ *    - Sends "ATDT\r\n" dial command
+ *    - Waits for "CONNECT 115200\r\n"
+ *    - Waits 5 seconds for DreamPi to start pppd
+ *    - Establishes PPP over SCIF
  *
- * This should be called early in main() before any network operations
+ * For Modem (DCNOW_CONN_MODEM):
+ *    - modem_init() - Initialize modem hardware
+ *    - ppp_modem_init("111-1111", 1, NULL) - Dial DreamPi
+ *    - ppp_set_login("dream", "dreamcast") - Set auth credentials
+ *    - ppp_connect() - Establish PPP connection
  *
- * @return 0 on success, negative on error:
- *         -1: Modem hardware initialization failed
- *         -2: PPP subsystem init failed
- *         -3: ppp_modem_init failed (dial failed)
- *         -4: ppp_set_login failed
- *         -5: ppp_connect failed
- *         -6: PPP connection timeout (40 seconds)
+ * Note: BBA is always checked first regardless of method.
+ *
+ * @return 0 on success, negative on error
+ */
+int dcnow_net_init_with_method(dcnow_connection_method_t method);
+
+/**
+ * Initialize network (legacy - tries serial first, then modem)
+ * @deprecated Use dcnow_net_init_with_method() instead
  */
 int dcnow_net_early_init(void);
 
 /**
- * Disconnect and reset the network connection (modem/PPP)
+ * Disconnect and reset the network connection (modem/serial/PPP)
  *
  * This function should be called before:
  * - Exiting to BIOS
  * - Launching a game
  * - Launching CodeBreaker
- * - Console reset (ABXY+Start combo)
  *
  * It will properly shutdown the PPP connection and modem hardware
- * with appropriate delays to ensure hardware fully resets.
+ * (if modem was used) with appropriate delays to ensure hardware
+ * fully resets. For serial coders cable connections, only PPP is
+ * shutdown (no modem hardware involved).
  *
  * After shutdown, net_default_dev is set to NULL so subsequent
  * calls to dcnow_net_early_init() will properly reinitialize.
  *
- * Timing: ~1.5 seconds (500ms PPP shutdown + 1000ms modem reset)
+ * Timing: ~200ms for serial, ~700ms for modem
  */
 void dcnow_net_disconnect(void);
 
