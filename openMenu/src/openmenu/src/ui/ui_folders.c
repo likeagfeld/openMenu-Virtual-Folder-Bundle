@@ -853,6 +853,18 @@ handle_input_ui(enum control input) {
     direction_last = direction_current;
     direction_current = false;
 
+    /* Check for L+R triggers pressed together to open DC Now popup */
+    if (input == TRIG_L && INPT_TriggerPressed(TRIGGER_R)) {
+        /* Both triggers pressed - open DC Now popup */
+        dcnow_setup(&draw_current, &cur_theme->colors, &navigate_timeout, cur_theme->menu_title_color);
+        return;
+    }
+    if (input == TRIG_R && INPT_TriggerPressed(TRIGGER_L)) {
+        /* Both triggers pressed - open DC Now popup */
+        dcnow_setup(&draw_current, &cur_theme->colors, &navigate_timeout, cur_theme->menu_title_color);
+        return;
+    }
+
     switch (input) {
         case UP:
             direction_current = true;
@@ -987,6 +999,9 @@ FUNCTION(UI_NAME, drawTR) {
         case DRAW_SAVELOAD: {
             draw_saveload_tr();
         } break;
+        case DRAW_DCNOW_PLAYERS: {
+            draw_dcnow_tr();
+        } break;
         default:
         case DRAW_UI: {
             /* Game list and artwork already drawn above */
@@ -1021,6 +1036,9 @@ FUNCTION_INPUT(UI_NAME, handle_input) {
         } break;
         case DRAW_SAVELOAD: {
             handle_input_saveload(input_current);
+        } break;
+        case DRAW_DCNOW_PLAYERS: {
+            handle_input_dcnow(input_current);
         } break;
         default:
         case DRAW_UI: {

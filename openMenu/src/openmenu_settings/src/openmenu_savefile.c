@@ -59,6 +59,7 @@ savefile_defaults() {
     sf_clock[0] = CLOCK_12HOUR;
     sf_vm2_send_all[0] = VM2_SEND_ALL;
     sf_boot_mode[0] = BOOT_MODE_FULL;
+    sf_dcnow_vmu[0] = DCNOW_VMU_ON;
 }
 
 //THIS IS USED BY THE CRAYON SAVEFILE DESERIALISER WHEN LOADING A SAVE FROM AN OLDER VERSION
@@ -103,6 +104,9 @@ update_savefile(void** loaded_variables, crayon_savefile_version_t loaded_versio
     }
     if (loaded_version < SFV_BOOT_MODE) {
         sf_boot_mode[0] = BOOT_MODE_FULL;
+    }
+    if (loaded_version < SFV_DCNOW_VMU) {
+        sf_dcnow_vmu[0] = DCNOW_VMU_ON;
     }
     return 0;
 }
@@ -172,6 +176,8 @@ setup_savefile(crayon_savefile_details_t* details) {
     crayon_savefile_add_variable(details, &sf_vm2_send_all, sf_vm2_send_all_type, sf_vm2_send_all_length, SFV_VM2_SEND_ALL,
                                  VAR_STILL_PRESENT);
     crayon_savefile_add_variable(details, &sf_boot_mode, sf_boot_mode_type, sf_boot_mode_length, SFV_BOOT_MODE,
+                                 VAR_STILL_PRESENT);
+    crayon_savefile_add_variable(details, &sf_dcnow_vmu, sf_dcnow_vmu_type, sf_dcnow_vmu_length, SFV_DCNOW_VMU,
                                  VAR_STILL_PRESENT);
 
     if (crayon_savefile_solidify(details)) {
