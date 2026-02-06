@@ -250,6 +250,64 @@ static void strip_html_tags(char *str) {
     *w = '\0';
 }
 
+/**
+ * Strip HTML tags from message content with special handling for media.
+ * <img ...> becomes "[img]", <br> variants become spaces,
+ * all other tags are removed. Works in-place.
+ */
+static void strip_html_tags_content(char *str) {
+    char *r = str, *w = str;
+    while (*r) {
+        if (*r == '<') {
+            if (strncmp(r + 1, "img", 3) == 0 && (r[4] == ' ' || r[4] == '/' || r[4] == '>')) {
+                /* <img ...> -> [img] (5 chars, always <= tag length) */
+                while (*r && *r != '>') r++;
+                if (*r) r++;
+                memcpy(w, "[img]", 5); w += 5;
+                continue;
+            }
+            if (strncmp(r + 1, "br", 2) == 0 && (r[3] == ' ' || r[3] == '/' || r[3] == '>')) {
+                /* <br>, <br/>, <br /> -> space */
+                while (*r && *r != '>') r++;
+                if (*r) r++;
+                *w++ = ' ';
+                continue;
+            }
+            /* Skip all other tags */
+            while (*r && *r != '>') r++;
+            if (*r) r++;
+            continue;
+        }
+        *w++ = *r++;
+    }
+    *w = '\0';
+}
+
+/**
+ * Find the closing </div> that matches a div starting at 'start'
+ * (pointer to just after the opening '>').
+ * Handles nested <div>...</div> pairs.
+ * Returns pointer to the matching </div> or NULL.
+ */
+static const char *find_matching_div_close(const char *start) {
+    const char *p = start;
+    int depth = 1;
+    while (*p && depth > 0) {
+        if (strncmp(p, "</div>", 6) == 0) {
+            depth--;
+            if (depth == 0) return p;
+            p += 6;
+        } else if (strncmp(p, "<div", 4) == 0 &&
+                   (p[4] == ' ' || p[4] == '>' || p[4] == '\t' || p[4] == '\n')) {
+            depth++;
+            p++;
+        } else {
+            p++;
+        }
+    }
+    return NULL;
+}
+
 /* ========================================================================
  * Public API
  * ======================================================================== */
@@ -672,146 +730,172 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
     }
 
     /* Parse messages from Discross HTML.
-     * Both Discross forks use <div class="message"> blocks, but differ in details:
      *
-     * Heath123 (original) fork:
-     *   <div class="message">
-     *     <table><td><div class="content">
-     *       <font class="name" ...>USERNAME</font>
-     *       <div class="messagecontent"><font ...>CONTENT</font></div>
-     *     </div></td></table>
-     *   </div>
+     * Anchored on "messagecontent" divs which are unique to top-level messages
+     * in both forks. This avoids the inner class="message" collision where
+     * merged message spans/divs also have class="message".
      *
-     * Larsenv fork:
-     *   <div class="message" ...>
-     *     <div ...><span ...>USERNAME</span></div>
-     *     <div class="messagecontent" ...>CONTENT</div>
-     *   </div>
+     * For each messagecontent div found:
+     * 1. Look backwards (up to 500 chars) for the username
+     *    - class="name" (Heath123: <font class="name">USER</font>)
+     *    - First <span> after message block start (larsenv)
+     * 2. Extract content using div-depth matching (handles nested divs from
+     *    merged messages in larsenv fork)
+     * 3. Convert <img> to [img], <br> to spaces, strip other tags
+     * 4. Keep ALL messages including image-only ones
      *
-     * Strategy: try class="name" first (Heath123), fall back to <span (larsenv).
-     * Use temp buffers to handle nested <font> tags before copying to small fields.
-     *
-     * Messages are rendered oldest-first. We parse ALL messages on the page
-     * using a circular buffer to keep the last DCHAT_MAX_MESSAGES that have
-     * actual text content (skipping image-only/embed-only messages).
+     * Uses circular buffer to keep the last DCHAT_MAX_MESSAGES.
      */
     data->message_count = 0;
-    int total_with_content = 0;
+    int total_parsed = 0;
     const char *pos = body;
+    char last_username[DCHAT_MAX_NAME_LEN];
+    last_username[0] = '\0';
 
     while (1) {
-        /* Find next message block */
-        const char *msg_div = strstr(pos, "class=\"message\"");
-        if (!msg_div) break;
+        /* Find next messagecontent div (unique to top-level messages) */
+        const char *mc = strstr(pos, "messagecontent");
+        if (!mc) break;
 
-        /* Boundary: next message block (don't search past it) */
-        const char *next_msg = strstr(msg_div + 15, "class=\"message\"");
+        /* Find opening > of the messagecontent tag */
+        const char *content_start = strchr(mc, '>');
+        if (!content_start) break;
+        content_start++;
+
+        /* Find matching </div> using depth counting (handles nested divs
+         * from merged messages in larsenv fork) */
+        const char *content_end = find_matching_div_close(content_start);
+        if (!content_end) break;
 
         /* --- Extract username ---
-         * Try class="name" first (Heath123: <font class="name" ...>USER</font>)
-         * Fall back to <span (larsenv: <span ...>USER</span>) */
-        const char *name_start = NULL;
-        const char *name_end = NULL;
-        const char *search_end_ref = NULL; /* where to start searching for content */
-
-        const char *name_class = strstr(msg_div, "class=\"name\"");
-        if (name_class && (!next_msg || name_class < next_msg)) {
-            const char *tag_end = strchr(name_class, '>');
-            if (tag_end && (!next_msg || tag_end < next_msg)) {
-                name_start = tag_end + 1;
-                name_end = strstr(name_start, "</font>");
-                if (name_end && next_msg && name_end > next_msg) name_end = NULL;
-                search_end_ref = name_end;
-            }
-        }
-
-        if (!name_start || !name_end) {
-            const char *span_tag = strstr(msg_div, "<span");
-            if (span_tag && (!next_msg || span_tag < next_msg)) {
-                const char *span_close = strchr(span_tag, '>');
-                if (span_close && (!next_msg || span_close < next_msg)) {
-                    name_start = span_close + 1;
-                    name_end = strstr(name_start, "</span>");
-                    if (name_end && next_msg && name_end > next_msg) name_end = NULL;
-                    search_end_ref = name_end;
-                }
-            }
-        }
-
-        /* Parse into circular buffer slot */
-        int slot = total_with_content % DCHAT_MAX_MESSAGES;
+         * Search backwards from messagecontent (up to 500 chars) for the
+         * username. In Heath123: <font class="name" ...>USER</font>.
+         * In larsenv: first <span ...>USER</span> after <div class="message". */
+        int slot = total_parsed % DCHAT_MAX_MESSAGES;
         dchat_message_t *msg = &data->messages[slot];
         msg->username[0] = '\0';
         msg->content[0] = '\0';
 
-        if (name_start && name_end) {
-            int ulen = (int)(name_end - name_start);
-            char ubuf[256];
-            if (ulen > (int)sizeof(ubuf) - 1) ulen = (int)sizeof(ubuf) - 1;
-            if (ulen > 0) {
-                memcpy(ubuf, name_start, ulen);
-                ubuf[ulen] = '\0';
-                strip_html_tags(ubuf);
-                html_decode_inplace(ubuf);
-                char *u = ubuf;
-                while (*u == ' ' || *u == '\n' || *u == '\r') u++;
-                ulen = strlen(u);
-                while (ulen > 0 && (u[ulen - 1] == ' ' || u[ulen - 1] == '\n'))
-                    u[--ulen] = '\0';
-                strncpy(msg->username, u, DCHAT_MAX_NAME_LEN - 1);
-                msg->username[DCHAT_MAX_NAME_LEN - 1] = '\0';
+        const char *search_back = (mc - 500 > pos) ? mc - 500 : pos;
+        const char *name_start = NULL;
+        const char *name_end = NULL;
+
+        /* Try class="name" first (Heath123) - find the LAST one before mc */
+        {
+            const char *temp = search_back;
+            const char *last_name_class = NULL;
+            while (temp < mc) {
+                const char *found = strstr(temp, "class=\"name\"");
+                if (found && found < mc) {
+                    last_name_class = found;
+                    temp = found + 12;
+                } else break;
             }
-        }
-        if (msg->username[0] == '\0') {
-            strcpy(msg->username, "???");
-        }
-
-        /* --- Extract message content ---
-         * Both forks use class="messagecontent". Content may be wrapped in
-         * <font> tags (Heath123), so use a temp buffer and strip HTML first. */
-        const char *search_from = search_end_ref ? search_end_ref : msg_div + 15;
-        const char *content_div = strstr(search_from, "messagecontent");
-
-        if (content_div && (!next_msg || content_div < next_msg)) {
-            const char *content_start = strchr(content_div, '>');
-            if (content_start) {
-                content_start++;
-                const char *content_end = strstr(content_start, "</div>");
-                if (content_end) {
-                    int clen = (int)(content_end - content_start);
-                    char cbuf[512];
-                    if (clen > (int)sizeof(cbuf) - 1) clen = (int)sizeof(cbuf) - 1;
-                    memcpy(cbuf, content_start, clen);
-                    cbuf[clen] = '\0';
-                    strip_html_tags(cbuf);
-                    html_decode_inplace(cbuf);
-                    char *c = cbuf;
-                    while (*c == ' ' || *c == '\n' || *c == '\r' || *c == '\t') c++;
-                    clen = strlen(c);
-                    while (clen > 0 && (c[clen - 1] == ' ' || c[clen - 1] == '\n'))
-                        c[--clen] = '\0';
-                    strncpy(msg->content, c, DCHAT_MAX_CONTENT_LEN - 1);
-                    msg->content[DCHAT_MAX_CONTENT_LEN - 1] = '\0';
+            if (last_name_class) {
+                const char *tag_end = strchr(last_name_class, '>');
+                if (tag_end && tag_end < mc) {
+                    name_start = tag_end + 1;
+                    name_end = strstr(name_start, "</font>");
+                    if (!name_end || name_end > mc) {
+                        name_end = strstr(name_start, "</span>");
+                    }
+                    if (name_end && name_end > mc) name_end = NULL;
                 }
             }
         }
 
-        /* Only count messages with actual text content */
-        if (msg->content[0] != '\0') {
-            total_with_content++;
+        /* Fallback: first <span> after last <div class="message" (larsenv) */
+        if (!name_start || !name_end) {
+            const char *temp = search_back;
+            const char *msg_block = search_back;
+            while (temp < mc) {
+                const char *found = strstr(temp, "<div class=\"message\"");
+                if (found && found < mc) {
+                    msg_block = found;
+                    temp = found + 20;
+                } else break;
+            }
+            const char *span_tag = strstr(msg_block, "<span");
+            if (span_tag && span_tag < mc) {
+                const char *span_close = strchr(span_tag, '>');
+                if (span_close && span_close < mc) {
+                    name_start = span_close + 1;
+                    name_end = strstr(name_start, "</span>");
+                    if (name_end && name_end > mc) name_end = NULL;
+                }
+            }
         }
 
-        pos = next_msg ? next_msg : (content_div ? content_div + 14 : msg_div + 15);
+        /* Extract and clean username */
+        if (name_start && name_end && name_end > name_start) {
+            int ulen = (int)(name_end - name_start);
+            char ubuf[256];
+            if (ulen > (int)sizeof(ubuf) - 1) ulen = (int)sizeof(ubuf) - 1;
+            memcpy(ubuf, name_start, ulen);
+            ubuf[ulen] = '\0';
+            strip_html_tags(ubuf);
+            html_decode_inplace(ubuf);
+            char *u = ubuf;
+            while (*u == ' ' || *u == '\n' || *u == '\r') u++;
+            ulen = strlen(u);
+            while (ulen > 0 && (u[ulen - 1] == ' ' || u[ulen - 1] == '\n'))
+                u[--ulen] = '\0';
+            if (u[0] != '\0') {
+                strncpy(msg->username, u, DCHAT_MAX_NAME_LEN - 1);
+                msg->username[DCHAT_MAX_NAME_LEN - 1] = '\0';
+                /* Remember for merged messages that lack a username header */
+                strncpy(last_username, msg->username, DCHAT_MAX_NAME_LEN - 1);
+            }
+        }
+
+        if (msg->username[0] == '\0') {
+            /* No username found - use last seen username (merged message) */
+            if (last_username[0] != '\0') {
+                strncpy(msg->username, last_username, DCHAT_MAX_NAME_LEN - 1);
+            } else {
+                strcpy(msg->username, "???");
+            }
+        }
+
+        /* --- Extract message content ---
+         * Content may contain nested divs (larsenv merged messages),
+         * <font> wrappers (Heath123), <img> tags, and <a> links.
+         * Use enhanced strip that converts img->[img], br->space. */
+        {
+            int clen = (int)(content_end - content_start);
+            char cbuf[1024];
+            if (clen > (int)sizeof(cbuf) - 1) clen = (int)sizeof(cbuf) - 1;
+            memcpy(cbuf, content_start, clen);
+            cbuf[clen] = '\0';
+            strip_html_tags_content(cbuf);  /* img->[img], br->space */
+            html_decode_inplace(cbuf);
+            char *c = cbuf;
+            while (*c == ' ' || *c == '\n' || *c == '\r' || *c == '\t') c++;
+            clen = strlen(c);
+            while (clen > 0 && (c[clen - 1] == ' ' || c[clen - 1] == '\n'))
+                c[--clen] = '\0';
+
+            if (c[0] == '\0') {
+                /* No text content after stripping - likely pure media */
+                strcpy(msg->content, "[media]");
+            } else {
+                strncpy(msg->content, c, DCHAT_MAX_CONTENT_LEN - 1);
+                msg->content[DCHAT_MAX_CONTENT_LEN - 1] = '\0';
+            }
+        }
+
+        total_parsed++;
+        pos = content_end + 6;  /* past </div> */
     }
 
     /* Set final count */
-    data->message_count = (total_with_content < DCHAT_MAX_MESSAGES)
-                          ? total_with_content : DCHAT_MAX_MESSAGES;
+    data->message_count = (total_parsed < DCHAT_MAX_MESSAGES)
+                          ? total_parsed : DCHAT_MAX_MESSAGES;
 
     /* If we wrapped around the circular buffer, reorder so messages[0] is oldest */
-    if (total_with_content > DCHAT_MAX_MESSAGES) {
+    if (total_parsed > DCHAT_MAX_MESSAGES) {
         dchat_message_t temp[DCHAT_MAX_MESSAGES];
-        int start = total_with_content % DCHAT_MAX_MESSAGES;
+        int start = total_parsed % DCHAT_MAX_MESSAGES;
         for (int i = 0; i < data->message_count; i++) {
             memcpy(&temp[i], &data->messages[(start + i) % DCHAT_MAX_MESSAGES],
                    sizeof(dchat_message_t));
@@ -821,8 +905,8 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
 
     data->messages_valid = true;
     free(response);
-    printf("Discross: Parsed %d messages (kept last %d with text)\n",
-           total_with_content, data->message_count);
+    printf("Discross: Parsed %d messages (kept last %d)\n",
+           total_parsed, data->message_count);
     return 0;
 
 #else
