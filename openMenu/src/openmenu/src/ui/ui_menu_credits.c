@@ -4273,6 +4273,151 @@ static char dchat_cred_pass[SF_DISCROSS_CRED_LEN];
 #define DCHAT_INPUT_TIMEOUT_INITIAL (10)
 static uint64_t dchat_last_fetch_ms = 0;
 
+/* ---- On-screen keyboard for controller-only users ---- */
+#define OSK_COLS 10
+#define OSK_ROWS 5
+static bool dchat_osk_active = false;
+static int dchat_osk_row = 0;
+static int dchat_osk_col = 0;
+static bool dchat_osk_shift = false;
+static int dchat_osk_max_len = DCHAT_INPUT_BUF_LEN;  /* max chars for current field */
+
+/* Keyboard layout (lowercase) */
+static const char osk_keys_lower[OSK_ROWS][OSK_COLS] = {
+    {'1','2','3','4','5','6','7','8','9','0'},
+    {'q','w','e','r','t','y','u','i','o','p'},
+    {'a','s','d','f','g','h','j','k','l','.'},
+    {'z','x','c','v','b','n','m','-','@','_'},
+    {' ',' ',' ','\x01','\x01','\x02','\x02','\x03','\x03','\x03'}
+    /* \x01=BKSP, \x02=SHIFT, \x03=DONE, spaces=SPACE key spanning 3 cells */
+};
+/* Labels for special keys in bottom row */
+static const char *osk_special_labels[] = {"SPC", "SPC", "SPC", "DEL", "DEL", "^", "^", "OK", "OK", "OK"};
+
+/* Keyboard layout (uppercase/shifted) */
+static const char osk_keys_upper[OSK_ROWS][OSK_COLS] = {
+    {'!','@','#','$','%','^','&','*','(', ')'},
+    {'Q','W','E','R','T','Y','U','I','O','P'},
+    {'A','S','D','F','G','H','J','K','L',':'},
+    {'Z','X','C','V','B','N','M','+','=','?'},
+    {' ',' ',' ','\x01','\x01','\x02','\x02','\x03','\x03','\x03'}
+};
+
+/* Draw the on-screen keyboard overlay */
+static void dchat_draw_osk(int popup_x, int popup_y, int popup_w, int popup_h) {
+    const int key_w = 24;
+    const int key_h = 20;
+    const int pad = 2;
+    const int kb_w = OSK_COLS * (key_w + pad) + pad;
+    const int kb_h = OSK_ROWS * (key_h + pad) + pad + 18;  /* +18 for title */
+    const int kb_x = popup_x + (popup_w - kb_w) / 2;
+    int kb_y = popup_y + popup_h - kb_h - 4;
+    if (kb_y < 40) kb_y = 40;
+
+    /* Background */
+    draw_draw_quad(kb_x - 2, kb_y - 2, kb_w + 4, kb_h + 4, 0xFF000000);
+    draw_draw_quad(kb_x, kb_y, kb_w, kb_h, 0xFF1A1A2E);
+    draw_draw_quad(kb_x, kb_y, kb_w, 2, 0xFF7289DA);
+
+    /* Title */
+    font_bmp_set_color(0xFF7289DA);
+    font_bmp_draw_main(kb_x + (kb_w / 2) - (8 * 4), kb_y + 2, "Keyboard");
+    int row_y = kb_y + 18;
+
+    const char (*keys)[OSK_COLS] = dchat_osk_shift ? osk_keys_upper : osk_keys_lower;
+
+    for (int r = 0; r < OSK_ROWS; r++) {
+        for (int c = 0; c < OSK_COLS; c++) {
+            int kx = kb_x + pad + c * (key_w + pad);
+            int ky = row_y + r * (key_h + pad);
+            bool selected = (r == dchat_osk_row && c == dchat_osk_col);
+            char ch = keys[r][c];
+
+            /* Key background */
+            uint32_t bg = selected ? 0xFF7289DA : 0xFF2A2A3E;
+            uint32_t fg = selected ? 0xFFFFFFFF : 0xFFDDDDDD;
+            draw_draw_quad(kx, ky, key_w, key_h, bg);
+
+            /* Key label */
+            char label[4] = {0};
+            if (r == OSK_ROWS - 1) {
+                /* Bottom row: special keys */
+                const char *sl = osk_special_labels[c];
+                font_bmp_set_color(fg);
+                font_bmp_draw_main(kx + (key_w / 2) - ((int)strlen(sl) * 4), ky + 4, sl);
+            } else {
+                label[0] = ch;
+                font_bmp_set_color(fg);
+                font_bmp_draw_main(kx + (key_w / 2) - 4, ky + 4, label);
+            }
+        }
+    }
+}
+
+/* Handle on-screen keyboard input. Returns true if input was consumed. */
+static bool dchat_handle_osk_input(enum control input) {
+    if (!dchat_osk_active) return false;
+
+    switch (input) {
+        case UP:
+            if (dchat_osk_row > 0) dchat_osk_row--;
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = 5;
+            return true;
+        case DOWN:
+            if (dchat_osk_row < OSK_ROWS - 1) dchat_osk_row++;
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = 5;
+            return true;
+        case LEFT:
+            if (dchat_osk_col > 0) dchat_osk_col--;
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = 5;
+            return true;
+        case RIGHT:
+            if (dchat_osk_col < OSK_COLS - 1) dchat_osk_col++;
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = 5;
+            return true;
+        case A: {
+            const char (*keys)[OSK_COLS] = dchat_osk_shift ? osk_keys_upper : osk_keys_lower;
+            char ch = keys[dchat_osk_row][dchat_osk_col];
+            if (ch == '\x01') {
+                /* Backspace */
+                if (dchat_input_pos > 0) {
+                    dchat_input_pos--;
+                    dchat_input_buf[dchat_input_pos] = '\0';
+                }
+            } else if (ch == '\x02') {
+                /* Shift toggle */
+                dchat_osk_shift = !dchat_osk_shift;
+            } else if (ch == '\x03') {
+                /* Done - close keyboard */
+                dchat_osk_active = false;
+            } else if (ch == ' ') {
+                /* Space */
+                if (dchat_input_pos < dchat_osk_max_len - 1) {
+                    dchat_input_buf[dchat_input_pos++] = ' ';
+                    dchat_input_buf[dchat_input_pos] = '\0';
+                }
+            } else {
+                /* Regular character */
+                if (dchat_input_pos < dchat_osk_max_len - 1) {
+                    dchat_input_buf[dchat_input_pos++] = ch;
+                    dchat_input_buf[dchat_input_pos] = '\0';
+                }
+                /* Auto-unshift after one character */
+                if (dchat_osk_shift) dchat_osk_shift = false;
+            }
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = 5;
+            return true;
+        }
+        case B:
+            /* Close keyboard */
+            dchat_osk_active = false;
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            return true;
+        default:
+            return true;  /* Consume all input while OSK is active */
+    }
+}
+
 /* Helper: load credentials from VMU save into dchat_data */
 static void dchat_load_saved_creds(void) {
     int port = sf_discross_port[0] > 0 ? (int)sf_discross_port[0] * 100 : 0;
@@ -4482,6 +4627,28 @@ static bool dchat_handle_text_entry_controls(enum control input, int max_len) {
 void
 handle_input_discord_chat(enum control input) {
     if (dchat_navigate_timeout && *dchat_navigate_timeout > 0) {
+        return;
+    }
+
+    /* On-screen keyboard intercepts all input when active */
+    if (dchat_osk_active) {
+        dchat_handle_osk_input(input);
+        return;
+    }
+
+    /* START toggles on-screen keyboard in text entry views */
+    if (input == START &&
+        (dchat_view == DCHAT_VIEW_ENTER_HOST || dchat_view == DCHAT_VIEW_ENTER_USER ||
+         dchat_view == DCHAT_VIEW_ENTER_PASS || dchat_view == DCHAT_VIEW_COMPOSE)) {
+        dchat_osk_active = true;
+        dchat_osk_row = 1;  /* Start on Q row */
+        dchat_osk_col = 0;
+        dchat_osk_shift = false;
+        /* Set max length for current field */
+        if (dchat_view == DCHAT_VIEW_ENTER_HOST) dchat_osk_max_len = SF_DISCROSS_HOST_LEN;
+        else if (dchat_view == DCHAT_VIEW_COMPOSE) dchat_osk_max_len = DCHAT_INPUT_BUF_LEN;
+        else dchat_osk_max_len = SF_DISCROSS_CRED_LEN;
+        if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
         return;
     }
 
@@ -5214,7 +5381,7 @@ draw_discord_chat_tr(void) {
         draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
         cur_y += 6;
         font_bmp_set_color(0xFF888888);
-        font_bmp_draw_main(x_item, cur_y, "A=Next  Y=Bksp  X=Space  B=Back");
+        font_bmp_draw_main(x_item, cur_y, "A=Next Y=Bksp X=Spc START=KB B=Back");
         cur_y += line_height;
 
     /* ---- LOGIN VIEW ---- */
@@ -5412,7 +5579,7 @@ draw_discord_chat_tr(void) {
             font_bmp_draw_main(x_item, cur_y, "Sending...");
         } else {
             font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A/Enter=Send  Y=Bksp  X=Space  B=Cancel");
+            font_bmp_draw_main(x_item, cur_y, "A=Send Y=Bksp X=Spc START=KB B=Cancel");
         }
         cur_y += line_height;
 
@@ -5496,5 +5663,10 @@ draw_discord_chat_tr(void) {
             font_bmp_draw_main(x_item, cur_y, "X=Retry  B=Back");
             cur_y += line_height;
         }
+    }
+
+    /* Draw on-screen keyboard overlay if active */
+    if (dchat_osk_active) {
+        dchat_draw_osk(x, y, width, height);
     }
 }
