@@ -5106,6 +5106,34 @@ handle_input_discord_chat(enum control input) {
 void
 draw_discord_chat_op(void) { /* Opaque pass - nothing to draw */ }
 
+/* Draw color-coded button hint: "A=Label" where "A" is in the button's physical color.
+ * Returns the x position after the drawn text. */
+static int dchat_draw_btn_hint(int x, int y, char btn, const char *label) {
+    uint32_t btn_color;
+    switch (btn) {
+        case 'A': btn_color = 0xFFDD2222; break;  /* Red */
+        case 'B': btn_color = 0xFF3399FF; break;   /* Blue */
+        case 'X': btn_color = 0xFFFFCC00; break;   /* Yellow */
+        case 'Y': btn_color = 0xFF00DD00; break;   /* Green */
+        case 'L': btn_color = 0xFFCC88FF; break;   /* Purple for L trigger */
+        case 'S': btn_color = 0xFFFF8800; break;   /* Orange for START */
+        default:  btn_color = 0xFFCCCCCC; break;
+    }
+    char btn_str[2] = { btn, '\0' };
+    font_bmp_set_color(btn_color);
+    font_bmp_draw_main(x, y, btn_str);
+    x += 8;
+    font_bmp_set_color(0xFFCCCCCC);
+    font_bmp_draw_main(x, y, label);
+    x += (int)strlen(label) * 8 + 12;
+    return x;
+}
+
+/* Draw a blurple separator line */
+static void dchat_draw_separator(int x, int y, int width) {
+    draw_draw_quad(x, y, width, 1, 0xFF7289DA);
+}
+
 void
 draw_discord_chat_tr(void) {
     z_set_cond(205.0f);
@@ -5299,11 +5327,11 @@ draw_discord_chat_tr(void) {
     draw_draw_quad(x - ao, y - ao, 2, height + (2 * ao), 0xFF7289DA);
     draw_draw_quad(x + width + ao - 2, y - ao, 2, height + (2 * ao), 0xFF7289DA);
 
-    /* Corner accents */
-    draw_draw_quad(x - 6, y - 6, 8, 8, 0xFF7289DA);
-    draw_draw_quad(x + width - 2, y - 6, 8, 8, 0xFF7289DA);
-    draw_draw_quad(x - 6, y + height - 2, 8, 8, 0xFF7289DA);
-    draw_draw_quad(x + width - 2, y + height - 2, 8, 8, 0xFF7289DA);
+    /* Dreamcast button color corner accents */
+    draw_draw_quad(x - 6, y - 6, 8, 8, 0xFFDD2222);          /* Top-left - RED (A) */
+    draw_draw_quad(x + width - 2, y - 6, 8, 8, 0xFF3399FF);  /* Top-right - BLUE (B) */
+    draw_draw_quad(x - 6, y + height - 2, 8, 8, 0xFF00DD00); /* Bottom-left - GREEN (Y) */
+    draw_draw_quad(x + width - 2, y + height - 2, 8, 8, 0xFFFFCC00); /* Bottom-right - YELLOW (X) */
 
     int cur_y = y + 2;
     font_bmp_begin_draw();
@@ -5324,7 +5352,10 @@ draw_discord_chat_tr(void) {
     int title_x = x + (width / 2) - ((strlen(title) * 8) / 2);
     font_bmp_set_color(0xFF7289DA);
     font_bmp_draw_main(title_x, cur_y, title);
-    cur_y += title_gap;
+    cur_y += line_height;
+    /* Title underline */
+    dchat_draw_separator(x_item, cur_y, width - padding);
+    cur_y += title_gap - line_height + 4;
 
     /* ---- CONNECTION SELECT VIEW ---- */
     if (dchat_view == DCHAT_VIEW_CONNECT) {
@@ -5367,10 +5398,12 @@ draw_discord_chat_tr(void) {
             }
 
             cur_y += 4;
-            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            dchat_draw_separator(x_item, cur_y, width - padding);
             cur_y += 6;
-            font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A=Connect  Y=Edit Creds  B=Close");
+            int hx = x_item;
+            hx = dchat_draw_btn_hint(hx, cur_y, 'A', "=Connect");
+            hx = dchat_draw_btn_hint(hx, cur_y, 'Y', "=Edit Creds");
+            dchat_draw_btn_hint(hx, cur_y, 'B', "=Close");
             cur_y += line_height;
         }
 
@@ -5418,10 +5451,16 @@ draw_discord_chat_tr(void) {
         cur_y += line_height + 4;
 
         cur_y += 4;
-        draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+        dchat_draw_separator(x_item, cur_y, width - padding);
         cur_y += 6;
-        font_bmp_set_color(0xFF888888);
-        font_bmp_draw_main(x_item, cur_y, "A=Next Y=Bksp X=Spc START=KB B=Back");
+        {
+            int hx = x_item;
+            hx = dchat_draw_btn_hint(hx, cur_y, 'A', "=Next");
+            hx = dchat_draw_btn_hint(hx, cur_y, 'Y', "=Bksp");
+            hx = dchat_draw_btn_hint(hx, cur_y, 'X', "=Spc");
+            hx = dchat_draw_btn_hint(hx, cur_y, 'S', "=KB");
+            dchat_draw_btn_hint(hx, cur_y, 'B', "=Back");
+        }
         cur_y += line_height;
 
     /* ---- LOGIN VIEW ---- */
@@ -5436,20 +5475,28 @@ draw_discord_chat_tr(void) {
             font_bmp_draw_main(x_item, cur_y, dchat_data.error_message);
             cur_y += line_height;
             cur_y += 4;
-            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            dchat_draw_separator(x_item, cur_y, width - padding);
             cur_y += 6;
-            font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A=Retry  Y=Edit Creds  B=Close");
+            {
+                int hx = x_item;
+                hx = dchat_draw_btn_hint(hx, cur_y, 'A', "=Retry");
+                hx = dchat_draw_btn_hint(hx, cur_y, 'Y', "=Edit Creds");
+                dchat_draw_btn_hint(hx, cur_y, 'B', "=Close");
+            }
             cur_y += line_height;
         } else {
             font_bmp_set_color(text_color);
             font_bmp_draw_main(x_item, cur_y, "Ready to connect.");
             cur_y += line_height;
             cur_y += 4;
-            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            dchat_draw_separator(x_item, cur_y, width - padding);
             cur_y += 6;
-            font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A=Login  Y=Edit Creds  B=Close");
+            {
+                int hx = x_item;
+                hx = dchat_draw_btn_hint(hx, cur_y, 'A', "=Login");
+                hx = dchat_draw_btn_hint(hx, cur_y, 'Y', "=Edit Creds");
+                dchat_draw_btn_hint(hx, cur_y, 'B', "=Close");
+            }
             cur_y += line_height;
         }
 
@@ -5466,10 +5513,14 @@ draw_discord_chat_tr(void) {
                 dchat_data.error_message : "No servers found");
             cur_y += line_height;
             cur_y += 4;
-            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            dchat_draw_separator(x_item, cur_y, width - padding);
             cur_y += 6;
-            font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "X=Refresh Y=Logout B=Close");
+            {
+                int hx = x_item;
+                hx = dchat_draw_btn_hint(hx, cur_y, 'X', "=Refresh");
+                hx = dchat_draw_btn_hint(hx, cur_y, 'Y', "=Logout");
+                dchat_draw_btn_hint(hx, cur_y, 'B', "=Close");
+            }
             cur_y += line_height;
         } else {
             /* Server count */
@@ -5502,10 +5553,15 @@ draw_discord_chat_tr(void) {
             }
 
             cur_y += 4;
-            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            dchat_draw_separator(x_item, cur_y, width - padding);
             cur_y += 6;
-            font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A=Sel X=Refresh Y=Logout B=Close");
+            {
+                int hx = x_item;
+                hx = dchat_draw_btn_hint(hx, cur_y, 'A', "=Sel");
+                hx = dchat_draw_btn_hint(hx, cur_y, 'X', "=Refresh");
+                hx = dchat_draw_btn_hint(hx, cur_y, 'Y', "=Logout");
+                dchat_draw_btn_hint(hx, cur_y, 'B', "=Close");
+            }
             cur_y += line_height;
         }
 
@@ -5522,10 +5578,14 @@ draw_discord_chat_tr(void) {
                 dchat_data.error_message : "No channels found");
             cur_y += line_height;
             cur_y += 4;
-            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            dchat_draw_separator(x_item, cur_y, width - padding);
             cur_y += 6;
-            font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "X=Refresh Y=Logout B=Back");
+            {
+                int hx = x_item;
+                hx = dchat_draw_btn_hint(hx, cur_y, 'X', "=Refresh");
+                hx = dchat_draw_btn_hint(hx, cur_y, 'Y', "=Logout");
+                dchat_draw_btn_hint(hx, cur_y, 'B', "=Back");
+            }
             cur_y += line_height;
         } else {
             char info[64];
@@ -5557,10 +5617,15 @@ draw_discord_chat_tr(void) {
             }
 
             cur_y += 4;
-            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            dchat_draw_separator(x_item, cur_y, width - padding);
             cur_y += 6;
-            font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A=Sel X=Refresh Y=Logout B=Back");
+            {
+                int hx = x_item;
+                hx = dchat_draw_btn_hint(hx, cur_y, 'A', "=Sel");
+                hx = dchat_draw_btn_hint(hx, cur_y, 'X', "=Refresh");
+                hx = dchat_draw_btn_hint(hx, cur_y, 'Y', "=Logout");
+                dchat_draw_btn_hint(hx, cur_y, 'B', "=Back");
+            }
             cur_y += line_height;
         }
 
@@ -5611,15 +5676,19 @@ draw_discord_chat_tr(void) {
         font_bmp_draw_main(x_item, cur_y, count_buf);
         cur_y += line_height + 4;
 
-        draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+        dchat_draw_separator(x_item, cur_y, width - padding);
         cur_y += 6;
 
         if (dchat_sending) {
             font_bmp_set_color(0xFFFFCC00);
             font_bmp_draw_main(x_item, cur_y, "Sending...");
         } else {
-            font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A=Send Y=Bksp X=Spc START=KB B=Cancel");
+            int hx = x_item;
+            hx = dchat_draw_btn_hint(hx, cur_y, 'A', "=Send");
+            hx = dchat_draw_btn_hint(hx, cur_y, 'Y', "=Bksp");
+            hx = dchat_draw_btn_hint(hx, cur_y, 'X', "=Spc");
+            hx = dchat_draw_btn_hint(hx, cur_y, 'S', "=KB");
+            dchat_draw_btn_hint(hx, cur_y, 'B', "=Cancel");
         }
         cur_y += line_height;
 
@@ -5685,10 +5754,15 @@ draw_discord_chat_tr(void) {
             }
 
             cur_y += 4;
-            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            dchat_draw_separator(x_item, cur_y, width - padding);
             cur_y += 6;
-            font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "X=Refresh Y=Compose L=Logout B=Back");
+            {
+                int hx = x_item;
+                hx = dchat_draw_btn_hint(hx, cur_y, 'X', "=Refresh");
+                hx = dchat_draw_btn_hint(hx, cur_y, 'Y', "=Compose");
+                hx = dchat_draw_btn_hint(hx, cur_y, 'L', "=Logout");
+                dchat_draw_btn_hint(hx, cur_y, 'B', "=Back");
+            }
             cur_y += line_height;
         } else {
             /* Error state */
@@ -5697,10 +5771,13 @@ draw_discord_chat_tr(void) {
                 dchat_data.error_message : "Failed to load messages");
             cur_y += line_height;
             cur_y += 4;
-            draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
+            dchat_draw_separator(x_item, cur_y, width - padding);
             cur_y += 6;
-            font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "X=Retry  B=Back");
+            {
+                int hx = x_item;
+                hx = dchat_draw_btn_hint(hx, cur_y, 'X', "=Retry");
+                dchat_draw_btn_hint(hx, cur_y, 'B', "=Back");
+            }
             cur_y += line_height;
         }
     }
