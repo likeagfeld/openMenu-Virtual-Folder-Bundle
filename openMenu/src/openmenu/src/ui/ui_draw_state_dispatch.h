@@ -10,6 +10,23 @@
 #pragma once
 
 /*
+ * CHECK_DCNOW_TRIGGERS(input, draw_state_ptr, colors_ptr, timeout_ptr, highlight_color)
+ * Checks if L+R triggers are both pressed and opens the DC Now popup.
+ * Must be placed at the top of handle_input_ui; returns from the caller on match.
+ */
+#define CHECK_DCNOW_TRIGGERS(input, draw_state_ptr, colors_ptr, timeout_ptr, highlight_color) \
+    do {                                                                                       \
+        if ((input) == TRIG_L && INPT_TriggerPressed(TRIGGER_R)) {                            \
+            dcnow_setup((draw_state_ptr), (colors_ptr), (timeout_ptr), (highlight_color));     \
+            return;                                                                            \
+        }                                                                                      \
+        if ((input) == TRIG_R && INPT_TriggerPressed(TRIGGER_L)) {                            \
+            dcnow_setup((draw_state_ptr), (colors_ptr), (timeout_ptr), (highlight_color));     \
+            return;                                                                            \
+        }                                                                                      \
+    } while (0)
+
+/*
  * DISPATCH_DRAW_OP(draw_current)
  * Dispatches opaque-polygon drawing for the current popup state.
  * Called from each UI module's drawOP function after drawing the background.

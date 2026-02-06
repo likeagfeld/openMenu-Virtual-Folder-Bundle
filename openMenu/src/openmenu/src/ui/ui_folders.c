@@ -764,17 +764,7 @@ handle_input_ui(enum control input) {
     direction_last = direction_current;
     direction_current = false;
 
-    /* Check for L+R triggers pressed together to open DC Now popup */
-    if (input == TRIG_L && INPT_TriggerPressed(TRIGGER_R)) {
-        /* Both triggers pressed - open DC Now popup */
-        dcnow_setup(&draw_current, &cur_theme->colors, &navigate_timeout, cur_theme->menu_title_color);
-        return;
-    }
-    if (input == TRIG_R && INPT_TriggerPressed(TRIGGER_L)) {
-        /* Both triggers pressed - open DC Now popup */
-        dcnow_setup(&draw_current, &cur_theme->colors, &navigate_timeout, cur_theme->menu_title_color);
-        return;
-    }
+    CHECK_DCNOW_TRIGGERS(input, &draw_current, &cur_theme->colors, &navigate_timeout, cur_theme->menu_title_color);
 
     switch (input) {
         case UP:
