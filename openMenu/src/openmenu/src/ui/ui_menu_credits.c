@@ -4442,6 +4442,24 @@ static void dchat_save_creds_to_settings(void) {
     sf_discross_port[0] = (uint8_t)(dchat_data.port / 100);
 }
 
+/* Logout from Discross session and return to login/credential entry */
+static void dchat_do_logout(void) {
+    dchat_data.logged_in = false;
+    dchat_data.server_count = 0;
+    dchat_data.channel_count = 0;
+    dchat_data.message_count = 0;
+    dchat_data.messages_valid = false;
+    dchat_data.current_server_id[0] = '\0';
+    dchat_data.current_channel_id[0] = '\0';
+    dchat_data.error_message[0] = '\0';
+    dchat_is_loading = false;
+    dchat_choice = 0;
+    dchat_scroll_offset = 0;
+    /* Go to login view with credentials pre-filled */
+    dchat_view = DCHAT_VIEW_LOGIN;
+    printf("Discross: Logged out\n");
+}
+
 /* DC Now connection status callback for visual feedback.
  * Stores each message in a rolling log so all dialing steps are visible. */
 static void dchat_connection_status_cb(const char* message) {
@@ -4670,6 +4688,15 @@ handle_input_discord_chat(enum control input) {
             case UP: case DOWN: {
                 dchat_conn_choice = dchat_conn_choice ? 0 : 1;
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
+            case Y: {
+                /* Edit credentials */
+                if (!dchat_is_loading) {
+                    dchat_view = DCHAT_VIEW_ENTER_HOST;
+                    strncpy(dchat_input_buf, dchat_cred_host, DCHAT_INPUT_BUF_LEN - 1);
+                    dchat_input_pos = strlen(dchat_input_buf);
+                    if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+                }
             } break;
             case B: {
                 *state_ptr = DRAW_UI;
@@ -4931,6 +4958,10 @@ handle_input_discord_chat(enum control input) {
                 dchat_scroll_offset = 0;
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
+            case Y: {
+                dchat_do_logout();
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
             case B: {
                 *state_ptr = DRAW_UI;
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
@@ -4987,6 +5018,10 @@ handle_input_discord_chat(enum control input) {
                 dchat_scroll_offset = 0;
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
+            case Y: {
+                dchat_do_logout();
+                if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+            } break;
             case B: {
                 dchat_view = DCHAT_VIEW_SERVERS;
                 dchat_choice = 0;
@@ -5018,6 +5053,11 @@ handle_input_discord_chat(enum control input) {
     /* --- Message list view --- */
     switch (input) {
         case A: break;
+        case TRIG_L: {
+            /* Logout */
+            dchat_do_logout();
+            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+        } break;
         case X: {
             dchat_data.messages_valid = false;
             dchat_is_loading = true;
@@ -5330,7 +5370,7 @@ draw_discord_chat_tr(void) {
             draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
             cur_y += 6;
             font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A=Connect  B=Close");
+            font_bmp_draw_main(x_item, cur_y, "A=Connect  Y=Edit Creds  B=Close");
             cur_y += line_height;
         }
 
@@ -5429,7 +5469,7 @@ draw_discord_chat_tr(void) {
             draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
             cur_y += 6;
             font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "X=Refresh  B=Close");
+            font_bmp_draw_main(x_item, cur_y, "X=Refresh Y=Logout B=Close");
             cur_y += line_height;
         } else {
             /* Server count */
@@ -5465,7 +5505,7 @@ draw_discord_chat_tr(void) {
             draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
             cur_y += 6;
             font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A=Select  X=Refresh  B=Close");
+            font_bmp_draw_main(x_item, cur_y, "A=Sel X=Refresh Y=Logout B=Close");
             cur_y += line_height;
         }
 
@@ -5485,7 +5525,7 @@ draw_discord_chat_tr(void) {
             draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
             cur_y += 6;
             font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "X=Refresh  B=Back");
+            font_bmp_draw_main(x_item, cur_y, "X=Refresh Y=Logout B=Back");
             cur_y += line_height;
         } else {
             char info[64];
@@ -5520,7 +5560,7 @@ draw_discord_chat_tr(void) {
             draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
             cur_y += 6;
             font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "A=Select  X=Refresh  B=Back");
+            font_bmp_draw_main(x_item, cur_y, "A=Sel X=Refresh Y=Logout B=Back");
             cur_y += line_height;
         }
 
@@ -5648,7 +5688,7 @@ draw_discord_chat_tr(void) {
             draw_draw_quad(x_item, cur_y, width - padding, 1, 0xFF444444);
             cur_y += 6;
             font_bmp_set_color(0xFF888888);
-            font_bmp_draw_main(x_item, cur_y, "X=Refresh  Y=Compose  B=Back");
+            font_bmp_draw_main(x_item, cur_y, "X=Refresh Y=Compose L=Logout B=Back");
             cur_y += line_height;
         } else {
             /* Error state */
