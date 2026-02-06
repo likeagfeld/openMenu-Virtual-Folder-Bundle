@@ -691,31 +691,15 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
      * Strategy: try class="name" first (Heath123), fall back to <span (larsenv).
      * Use temp buffers to handle nested <font> tags before copying to small fields.
      *
-     * Messages are rendered oldest-first. If there are more than DCHAT_MAX_MESSAGES,
-     * skip to the last N to show the newest messages (like a real chat client).
+     * Messages are rendered oldest-first. We parse ALL messages on the page
+     * using a circular buffer to keep the last DCHAT_MAX_MESSAGES that have
+     * actual text content (skipping image-only/embed-only messages).
      */
-
-    /* Count total message blocks to determine how many to skip */
-    int total_msgs = 0;
-    const char *count_pos = body;
-    while ((count_pos = strstr(count_pos, "class=\"message\"")) != NULL) {
-        total_msgs++;
-        count_pos += 15;
-    }
-    int skip = (total_msgs > DCHAT_MAX_MESSAGES) ? total_msgs - DCHAT_MAX_MESSAGES : 0;
-    printf("Discross: %d message blocks on page, skipping %d oldest\n", total_msgs, skip);
-
     data->message_count = 0;
+    int total_with_content = 0;
     const char *pos = body;
 
-    /* Skip past the oldest messages to get to the newest */
-    for (int s = 0; s < skip; s++) {
-        pos = strstr(pos, "class=\"message\"");
-        if (!pos) break;
-        pos += 15;
-    }
-
-    while (data->message_count < DCHAT_MAX_MESSAGES) {
+    while (1) {
         /* Find next message block */
         const char *msg_div = strstr(pos, "class=\"message\"");
         if (!msg_div) break;
@@ -754,7 +738,9 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
             }
         }
 
-        dchat_message_t *msg = &data->messages[data->message_count];
+        /* Parse into circular buffer slot */
+        int slot = total_with_content % DCHAT_MAX_MESSAGES;
+        dchat_message_t *msg = &data->messages[slot];
         msg->username[0] = '\0';
         msg->content[0] = '\0';
 
@@ -810,17 +796,33 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
             }
         }
 
-        /* Only count if there's actual content */
+        /* Only count messages with actual text content */
         if (msg->content[0] != '\0') {
-            data->message_count++;
+            total_with_content++;
         }
 
         pos = next_msg ? next_msg : (content_div ? content_div + 14 : msg_div + 15);
     }
 
+    /* Set final count */
+    data->message_count = (total_with_content < DCHAT_MAX_MESSAGES)
+                          ? total_with_content : DCHAT_MAX_MESSAGES;
+
+    /* If we wrapped around the circular buffer, reorder so messages[0] is oldest */
+    if (total_with_content > DCHAT_MAX_MESSAGES) {
+        dchat_message_t temp[DCHAT_MAX_MESSAGES];
+        int start = total_with_content % DCHAT_MAX_MESSAGES;
+        for (int i = 0; i < data->message_count; i++) {
+            memcpy(&temp[i], &data->messages[(start + i) % DCHAT_MAX_MESSAGES],
+                   sizeof(dchat_message_t));
+        }
+        memcpy(data->messages, temp, sizeof(dchat_message_t) * data->message_count);
+    }
+
     data->messages_valid = true;
     free(response);
-    printf("Discross: Parsed %d messages\n", data->message_count);
+    printf("Discross: Parsed %d messages (kept last %d with text)\n",
+           total_with_content, data->message_count);
     return 0;
 
 #else
