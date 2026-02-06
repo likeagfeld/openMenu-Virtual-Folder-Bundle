@@ -8,7 +8,7 @@
  *   POST /login            - form-encoded username/password -> Set-Cookie: sessionID
  *   GET  /server/          - HTML server list (parse for guild IDs)
  *   GET  /server/{id}      - HTML channel list (parse for channel IDs)
- *   GET  /channels/{id}    - HTML message history (parse <th> and <td>)
+ *   GET  /channels/{id}    - HTML message history (parse message divs)
  *   GET  /send?message=..&channel=.. - send message (returns 302)
  */
 
@@ -595,7 +595,7 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
         channel_id, data->host, data->port, data->session_id);
 
     /* Messages page can be large (CSS/JS overhead + messages) - allocate on heap */
-    const int resp_size = 32768;
+    const int resp_size = 49152;  /* 48KB - Heath123 fork pages have large inline CSS/JS */
     char *response = (char *)malloc(resp_size);
     if (!response) {
         strcpy(data->error_message, "Out of memory");
@@ -621,14 +621,24 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
     }
 
     /* Parse messages from Discross HTML.
-     * Discross uses <div class="message"> blocks:
-     *   <div class="message" ...>
-     *     <div ...>
-     *       <span ...>USERNAME</span>
-     *       <span ...>DATE</span>
-     *     </div>
-     *     <a ...><div class="messagecontent" ...>CONTENT</div></a>
+     * Both Discross forks use <div class="message"> blocks, but differ in details:
+     *
+     * Heath123 (original) fork:
+     *   <div class="message">
+     *     <table><td><div class="content">
+     *       <font class="name" ...>USERNAME</font>
+     *       <div class="messagecontent"><font ...>CONTENT</font></div>
+     *     </div></td></table>
      *   </div>
+     *
+     * Larsenv fork:
+     *   <div class="message" ...>
+     *     <div ...><span ...>USERNAME</span></div>
+     *     <div class="messagecontent" ...>CONTENT</div>
+     *   </div>
+     *
+     * Strategy: try class="name" first (Heath123), fall back to <span (larsenv).
+     * Use temp buffers to handle nested <font> tags before copying to small fields.
      */
     data->message_count = 0;
     const char *pos = body;
@@ -638,42 +648,71 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
         const char *msg_div = strstr(pos, "class=\"message\"");
         if (!msg_div) break;
 
-        /* Find the first <span> inside this message block for the username */
-        const char *span_tag = strstr(msg_div, "<span");
-        if (!span_tag) break;
-        const char *span_close = strchr(span_tag, '>');
-        if (!span_close) break;
-        span_close++;
+        /* Boundary: next message block (don't search past it) */
+        const char *next_msg = strstr(msg_div + 15, "class=\"message\"");
 
-        /* Extract username text until </span> */
-        const char *span_end = strstr(span_close, "</span>");
-        if (!span_end) break;
+        /* --- Extract username ---
+         * Try class="name" first (Heath123: <font class="name" ...>USER</font>)
+         * Fall back to <span (larsenv: <span ...>USER</span>) */
+        const char *name_start = NULL;
+        const char *name_end = NULL;
+        const char *search_end_ref = NULL; /* where to start searching for content */
+
+        const char *name_class = strstr(msg_div, "class=\"name\"");
+        if (name_class && (!next_msg || name_class < next_msg)) {
+            const char *tag_end = strchr(name_class, '>');
+            if (tag_end && (!next_msg || tag_end < next_msg)) {
+                name_start = tag_end + 1;
+                name_end = strstr(name_start, "</font>");
+                if (name_end && next_msg && name_end > next_msg) name_end = NULL;
+                search_end_ref = name_end;
+            }
+        }
+
+        if (!name_start || !name_end) {
+            const char *span_tag = strstr(msg_div, "<span");
+            if (span_tag && (!next_msg || span_tag < next_msg)) {
+                const char *span_close = strchr(span_tag, '>');
+                if (span_close && (!next_msg || span_close < next_msg)) {
+                    name_start = span_close + 1;
+                    name_end = strstr(name_start, "</span>");
+                    if (name_end && next_msg && name_end > next_msg) name_end = NULL;
+                    search_end_ref = name_end;
+                }
+            }
+        }
 
         dchat_message_t *msg = &data->messages[data->message_count];
+        msg->username[0] = '\0';
         msg->content[0] = '\0';
 
-        int ulen = (int)(span_end - span_close);
-        if (ulen > DCHAT_MAX_NAME_LEN - 1) ulen = DCHAT_MAX_NAME_LEN - 1;
-        if (ulen > 0) {
-            memcpy(msg->username, span_close, ulen);
-            msg->username[ulen] = '\0';
-            strip_html_tags(msg->username);
-            html_decode_inplace(msg->username);
-            /* Trim whitespace */
-            char *u = msg->username;
-            while (*u == ' ' || *u == '\n' || *u == '\r') u++;
-            if (u != msg->username) memmove(msg->username, u, strlen(u) + 1);
-            ulen = strlen(msg->username);
-            while (ulen > 0 && (msg->username[ulen - 1] == ' ' || msg->username[ulen - 1] == '\n'))
-                msg->username[--ulen] = '\0';
-        } else {
+        if (name_start && name_end) {
+            int ulen = (int)(name_end - name_start);
+            char ubuf[256];
+            if (ulen > (int)sizeof(ubuf) - 1) ulen = (int)sizeof(ubuf) - 1;
+            if (ulen > 0) {
+                memcpy(ubuf, name_start, ulen);
+                ubuf[ulen] = '\0';
+                strip_html_tags(ubuf);
+                html_decode_inplace(ubuf);
+                char *u = ubuf;
+                while (*u == ' ' || *u == '\n' || *u == '\r') u++;
+                ulen = strlen(u);
+                while (ulen > 0 && (u[ulen - 1] == ' ' || u[ulen - 1] == '\n'))
+                    u[--ulen] = '\0';
+                strncpy(msg->username, u, DCHAT_MAX_NAME_LEN - 1);
+                msg->username[DCHAT_MAX_NAME_LEN - 1] = '\0';
+            }
+        }
+        if (msg->username[0] == '\0') {
             strcpy(msg->username, "???");
         }
 
-        /* Find messagecontent div for the actual message text */
-        const char *content_div = strstr(span_end, "messagecontent");
-        /* Don't look past the next message block */
-        const char *next_msg = strstr(span_end + 1, "class=\"message\"");
+        /* --- Extract message content ---
+         * Both forks use class="messagecontent". Content may be wrapped in
+         * <font> tags (Heath123), so use a temp buffer and strip HTML first. */
+        const char *search_from = search_end_ref ? search_end_ref : msg_div + 15;
+        const char *content_div = strstr(search_from, "messagecontent");
 
         if (content_div && (!next_msg || content_div < next_msg)) {
             const char *content_start = strchr(content_div, '>');
@@ -682,18 +721,19 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
                 const char *content_end = strstr(content_start, "</div>");
                 if (content_end) {
                     int clen = (int)(content_end - content_start);
-                    if (clen > DCHAT_MAX_CONTENT_LEN - 1) clen = DCHAT_MAX_CONTENT_LEN - 1;
-                    memcpy(msg->content, content_start, clen);
-                    msg->content[clen] = '\0';
-                    strip_html_tags(msg->content);
-                    html_decode_inplace(msg->content);
-                    /* Trim whitespace */
-                    char *c = msg->content;
+                    char cbuf[512];
+                    if (clen > (int)sizeof(cbuf) - 1) clen = (int)sizeof(cbuf) - 1;
+                    memcpy(cbuf, content_start, clen);
+                    cbuf[clen] = '\0';
+                    strip_html_tags(cbuf);
+                    html_decode_inplace(cbuf);
+                    char *c = cbuf;
                     while (*c == ' ' || *c == '\n' || *c == '\r' || *c == '\t') c++;
-                    if (c != msg->content) memmove(msg->content, c, strlen(c) + 1);
-                    clen = strlen(msg->content);
-                    while (clen > 0 && (msg->content[clen - 1] == ' ' || msg->content[clen - 1] == '\n'))
-                        msg->content[--clen] = '\0';
+                    clen = strlen(c);
+                    while (clen > 0 && (c[clen - 1] == ' ' || c[clen - 1] == '\n'))
+                        c[--clen] = '\0';
+                    strncpy(msg->content, c, DCHAT_MAX_CONTENT_LEN - 1);
+                    msg->content[DCHAT_MAX_CONTENT_LEN - 1] = '\0';
                 }
             }
         }
@@ -703,7 +743,7 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
             data->message_count++;
         }
 
-        pos = next_msg ? next_msg : (content_div ? content_div + 14 : span_end + 7);
+        pos = next_msg ? next_msg : (content_div ? content_div + 14 : msg_div + 15);
     }
 
     data->messages_valid = true;
