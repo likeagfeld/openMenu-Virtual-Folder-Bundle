@@ -35,6 +35,7 @@
 
 /* External declaration for VM2/VMUPro/USB4Maple detection */
 #include <dc/maple.h>
+#include <kos/thread.h>  /* for thd_create (Discross connection thread) */
 #include "vm2/vm2_api.h"
 extern int vm2_device_count;
 extern void vm2_rescan(void);
@@ -4238,6 +4239,16 @@ static int dchat_conn_choice = 0;  /* 0=Serial, 1=Modem */
 static int* dchat_navigate_timeout = NULL;
 static char dchat_connection_status_msg[128] = "";
 
+/* Status log - stores sequential connection status messages for display */
+#define DCHAT_STATUS_LOG_LINES 4
+#define DCHAT_STATUS_LOG_LEN   60
+static char dchat_status_log[DCHAT_STATUS_LOG_LINES][DCHAT_STATUS_LOG_LEN];
+static int dchat_status_log_count = 0;
+
+/* Background connection thread state */
+static volatile bool dchat_connect_done = false;
+static volatile int dchat_connect_result = -1;
+
 /* Track what kind of fetch is pending */
 typedef enum {
     DCHAT_FETCH_NONE,
@@ -4286,12 +4297,37 @@ static void dchat_save_creds_to_settings(void) {
     sf_discross_port[0] = (uint8_t)(dchat_data.port / 100);
 }
 
-/* DC Now connection status callback for visual feedback */
+/* DC Now connection status callback for visual feedback.
+ * Stores each message in a rolling log so all dialing steps are visible. */
 static void dchat_connection_status_cb(const char* message) {
     if (message) {
         strncpy(dchat_connection_status_msg, message, sizeof(dchat_connection_status_msg) - 1);
+        /* Add to status log (shift up if full) */
+        if (dchat_status_log_count >= DCHAT_STATUS_LOG_LINES) {
+            for (int i = 0; i < DCHAT_STATUS_LOG_LINES - 1; i++) {
+                memcpy(dchat_status_log[i], dchat_status_log[i + 1], DCHAT_STATUS_LOG_LEN);
+            }
+            dchat_status_log_count = DCHAT_STATUS_LOG_LINES - 1;
+        }
+        strncpy(dchat_status_log[dchat_status_log_count], message, DCHAT_STATUS_LOG_LEN - 1);
+        dchat_status_log[dchat_status_log_count][DCHAT_STATUS_LOG_LEN - 1] = '\0';
+        dchat_status_log_count++;
     }
 }
+
+#ifdef _arch_dreamcast
+/* Background thread for network connection so UI keeps updating */
+static void *dchat_connect_thread_func(void *param) {
+    (void)param;
+    dcnow_set_status_callback(dchat_connection_status_cb);
+    int result = dcnow_net_init_with_method(
+        dchat_conn_choice == 0 ? DCNOW_CONN_SERIAL : DCNOW_CONN_MODEM);
+    dcnow_set_status_callback(NULL);
+    dchat_connect_result = result;
+    dchat_connect_done = true;
+    return NULL;
+}
+#endif
 
 /* Keyboard scancode to ASCII mapping for Dreamcast keyboard.
  * Only handles basic printable ASCII for chat messages. */
@@ -4459,6 +4495,7 @@ handle_input_discord_chat(enum control input) {
                     dchat_is_loading = true;
                     dchat_shown_loading = false;
                     dchat_connection_status_msg[0] = '\0';
+                    dchat_status_log_count = 0;
                     dchat_data.error_message[0] = '\0';
                 }
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
@@ -4866,15 +4903,21 @@ void
 draw_discord_chat_tr(void) {
     z_set_cond(205.0f);
 
-    /* --- Handle pending network connection --- */
+    /* --- Handle pending network connection (background thread) --- */
 #ifdef _arch_dreamcast
     if (dchat_needs_connect && dchat_shown_loading) {
         dchat_needs_connect = false;
-        printf("Discross: Starting connection with method %d...\n", dchat_conn_choice);
-        dcnow_set_status_callback(dchat_connection_status_cb);
-        int net_result = dcnow_net_init_with_method(
-            dchat_conn_choice == 0 ? DCNOW_CONN_SERIAL : DCNOW_CONN_MODEM);
-        dcnow_set_status_callback(NULL);
+        dchat_connect_done = false;
+        dchat_connect_result = -1;
+        dchat_status_log_count = 0;
+        printf("Discross: Starting connection with method %d (background)...\n", dchat_conn_choice);
+        thd_create(0, dchat_connect_thread_func, NULL);
+    }
+
+    /* Check if background connection thread completed */
+    if (dchat_connect_done && dchat_is_loading && dchat_view == DCHAT_VIEW_CONNECT) {
+        dchat_connect_done = false;
+        int net_result = dchat_connect_result;
 
         if (net_result < 0) {
             printf("Discross: Connection failed: %d\n", net_result);
@@ -5001,12 +5044,12 @@ draw_discord_chat_tr(void) {
     int num_lines = 2; /* Title + status/instructions */
 
     if (dchat_view == DCHAT_VIEW_CONNECT) {
-        num_lines += 6;
+        num_lines += 6 + (dchat_is_loading ? DCHAT_STATUS_LOG_LINES : 0);
     } else if (dchat_view == DCHAT_VIEW_ENTER_HOST || dchat_view == DCHAT_VIEW_ENTER_USER ||
                dchat_view == DCHAT_VIEW_ENTER_PASS) {
         num_lines += 6;
     } else if (dchat_view == DCHAT_VIEW_COMPOSE) {
-        num_lines += 6;
+        num_lines += 8;  /* Taller box: 3-line text area + label + counter + controls */
     } else if (dchat_view == DCHAT_VIEW_SERVERS && dchat_data.server_count > 0) {
         int vis = dchat_data.server_count < max_visible ? dchat_data.server_count : max_visible;
         num_lines += vis + 3;
@@ -5079,7 +5122,7 @@ draw_discord_chat_tr(void) {
     /* ---- CONNECTION SELECT VIEW ---- */
     if (dchat_view == DCHAT_VIEW_CONNECT) {
         if (dchat_is_loading) {
-            /* Show connecting status */
+            /* Show connecting status with full status log */
             font_bmp_set_color(0xFFFFCC00);
             const char *conn_method = dchat_conn_choice == 0 ? "Serial" : "Modem";
             char connecting_msg[80];
@@ -5087,9 +5130,10 @@ draw_discord_chat_tr(void) {
             font_bmp_draw_main(x_item, cur_y, connecting_msg);
             cur_y += line_height;
 
-            if (dchat_connection_status_msg[0]) {
-                font_bmp_set_color(text_color);
-                font_bmp_draw_main(x_item, cur_y, dchat_connection_status_msg);
+            /* Show all status log messages (sequential dialing steps) */
+            for (int i = 0; i < dchat_status_log_count && i < DCHAT_STATUS_LOG_LINES; i++) {
+                font_bmp_set_color((i == dchat_status_log_count - 1) ? 0xFFFFCC00 : 0xFF888888);
+                font_bmp_draw_main(x_item + 8, cur_y, dchat_status_log[i]);
                 cur_y += line_height;
             }
             dchat_shown_loading = true;
@@ -5316,17 +5360,43 @@ draw_discord_chat_tr(void) {
     /* ---- COMPOSE VIEW ---- */
     } else if (dchat_view == DCHAT_VIEW_COMPOSE) {
         font_bmp_set_color(0xFF88CCFF);
-        font_bmp_draw_main(x_item, cur_y, "Type your message (keyboard):");
+        font_bmp_draw_main(x_item, cur_y, "Type your message:");
         cur_y += line_height;
 
-        draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, line_height * 2 + 4, 0xFF1A1A2E);
+        /* Text input box with word wrapping */
+        int box_lines = 3;
+        int box_h = line_height * box_lines + 4;
+        draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, box_h, 0xFF1A1A2E);
         draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, 2, 0xFF7289DA);
 
+        /* Calculate characters per line and wrap text */
+        int chars_per_line = (width - padding) / 8;
+        if (chars_per_line < 10) chars_per_line = 10;
         char display_buf[DCHAT_INPUT_BUF_LEN + 2];
         snprintf(display_buf, sizeof(display_buf), "%s_", dchat_input_buf);
+        int total_len = (int)strlen(display_buf);
+        int total_lines = (total_len + chars_per_line - 1) / chars_per_line;
+        if (total_lines < 1) total_lines = 1;
+
+        /* Show last box_lines lines to keep cursor visible */
+        int start_line = 0;
+        if (total_lines > box_lines) start_line = total_lines - box_lines;
+
         font_bmp_set_color(0xFFFFFFFF);
-        font_bmp_draw_main(x_item, cur_y, display_buf);
-        cur_y += line_height * 2;
+        for (int ln = start_line; ln < total_lines && ln < start_line + box_lines; ln++) {
+            int ln_start = ln * chars_per_line;
+            int ln_len = total_len - ln_start;
+            if (ln_len > chars_per_line) ln_len = chars_per_line;
+            char line_buf[80];
+            if (ln_len > (int)sizeof(line_buf) - 1) ln_len = (int)sizeof(line_buf) - 1;
+            memcpy(line_buf, display_buf + ln_start, ln_len);
+            line_buf[ln_len] = '\0';
+            font_bmp_draw_main(x_item, cur_y, line_buf);
+            cur_y += line_height;
+        }
+        /* Skip remaining box space if text is short */
+        int lines_drawn = (total_lines < box_lines) ? total_lines : box_lines;
+        cur_y += (box_lines - lines_drawn) * line_height;
 
         char count_buf[32];
         snprintf(count_buf, sizeof(count_buf), "%d/%d", dchat_input_pos, DCHAT_INPUT_BUF_LEN - 1);
