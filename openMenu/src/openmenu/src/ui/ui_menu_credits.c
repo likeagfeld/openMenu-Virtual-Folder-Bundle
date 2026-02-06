@@ -896,7 +896,7 @@ draw_menu_tr(void) {
         for (int i = 0; i < MENU_CHOICES; i++) {
             if (option_visible(i)) visible_options++;
         }
-        const int height = (visible_options + 4) * line_height + (line_height * 11 / 12);
+        const int height = (visible_options + 5) * line_height + (line_height * 11 / 12);
         const int x = (640 / 2) - (width / 2);
         const int y = (480 / 2) - (height / 2);
         const int x_item = x + 8;  /* 8px left margin */
@@ -988,7 +988,7 @@ draw_menu_tr(void) {
         for (int i = 0; i < MENU_CHOICES; i++) {
             if (option_visible(i)) visible_options++;
         }
-        const int height = (visible_options + 3) * line_height - line_height / 4 + line_height; /* Add space for version strings */
+        const int height = (visible_options + 4) * line_height - line_height / 4 + line_height; /* Add space for version strings */
         const int x = (640 / 2) - (width / 2);
         const int y = (480 / 2) - (height / 2); /* Vertically centered */
         const int x_item = x + 4;
