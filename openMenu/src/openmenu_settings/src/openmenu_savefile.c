@@ -5,6 +5,7 @@
 #endif
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <crayon_savefile/savefile.h>
 
 #include "openmenu_savefile.h"
@@ -214,8 +215,13 @@ savefile_init() {
 
     if (!setup_res && !device_res) {
         savefile_was_migrated = false;
-        crayon_savefile_load_savedata(&savefile_details);
+        int8_t load_result = crayon_savefile_load_savedata(&savefile_details);
+        if (load_result != 0) {
+            printf("savefile_init: load failed (%d), using defaults\n", load_result);
+        }
         settings_sanitize();
+        printf("savefile_init: sf_ui=%d sf_region=%d sf_sort=%d\n",
+               sf_ui[0], sf_region[0], sf_sort[0]);
 
         /* Remember which device we loaded from at startup */
         startup_device_id = savefile_details.save_device_id;

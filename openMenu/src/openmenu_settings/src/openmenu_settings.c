@@ -57,7 +57,7 @@ settings_sanitize() {
     }
 
     if ((sf_custom_theme[0] < THEME_START) || (sf_custom_theme[0] > THEME_END)) {
-        sf_custom_theme_num[0] = (CFG_CUSTOM_THEME_NUM)THEME_OFF;
+        sf_custom_theme[0] = THEME_OFF;
     }
 
     if ((sf_custom_theme_num[0] < THEME_NUM_START) || (sf_custom_theme_num[0] > THEME_NUM_END)) {
@@ -68,8 +68,8 @@ settings_sanitize() {
         sf_region[0] = REGION_END + 1 + sf_custom_theme_num[0];
     }
 
-    if ((sf_beep[0] < BIOS_3D_START) || (sf_beep[0] > BIOS_3D_END)) {
-        sf_beep[0] = BIOS_3D_OFF;
+    if ((sf_bios_3d[0] < BIOS_3D_START) || (sf_bios_3d[0] > BIOS_3D_END)) {
+        sf_bios_3d[0] = BIOS_3D_OFF;
     }
 
     if ((sf_scroll_art[0] < SCROLL_ART_START) || (sf_scroll_art[0] > SCROLL_ART_END)) {

@@ -9,6 +9,7 @@
  * http://www.opensource.org/licenses/BSD-3-Clause
  */
 
+#include <stdio.h>
 #include <string.h>
 
 #include <backend/db_item.h>
@@ -2077,6 +2078,7 @@ static void saveload_do_load(void) {
 
     /* Perform load */
     int8_t result = savefile_load_from_device(slot->device_id);
+    printf("saveload_do_load: result=%d device=%d\n", result, slot->device_id);
 
     saveload_substate = SAVELOAD_RESULT;
     if (result == 0) {
@@ -2182,7 +2184,7 @@ handle_input_saveload(enum control input) {
                     saveload_close_all(1);  /* Close with UI reload */
                 } else if (saveload_msg_line1 != NULL &&
                            strstr(saveload_msg_line1, "saved") != NULL) {
-                    saveload_close_all(0);  /* Close without reload */
+                    saveload_close_all(1);  /* Close with reload so saved settings take effect */
                 } else {
                     /* Error - return to browse */
                     saveload_substate = SAVELOAD_BROWSE;
