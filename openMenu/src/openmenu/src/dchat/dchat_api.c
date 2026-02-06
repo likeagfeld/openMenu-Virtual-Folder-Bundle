@@ -688,9 +688,30 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
      *
      * Strategy: try class="name" first (Heath123), fall back to <span (larsenv).
      * Use temp buffers to handle nested <font> tags before copying to small fields.
+     *
+     * Messages are rendered oldest-first. If there are more than DCHAT_MAX_MESSAGES,
+     * skip to the last N to show the newest messages (like a real chat client).
      */
+
+    /* Count total message blocks to determine how many to skip */
+    int total_msgs = 0;
+    const char *count_pos = body;
+    while ((count_pos = strstr(count_pos, "class=\"message\"")) != NULL) {
+        total_msgs++;
+        count_pos += 15;
+    }
+    int skip = (total_msgs > DCHAT_MAX_MESSAGES) ? total_msgs - DCHAT_MAX_MESSAGES : 0;
+    printf("Discross: %d message blocks on page, skipping %d oldest\n", total_msgs, skip);
+
     data->message_count = 0;
     const char *pos = body;
+
+    /* Skip past the oldest messages to get to the newest */
+    for (int s = 0; s < skip; s++) {
+        pos = strstr(pos, "class=\"message\"");
+        if (!pos) break;
+        pos += 15;
+    }
 
     while (data->message_count < DCHAT_MAX_MESSAGES) {
         /* Find next message block */
