@@ -21,7 +21,7 @@
  */
 
 /* Limits */
-#define DCHAT_MAX_MESSAGES      16
+#define DCHAT_MAX_MESSAGES      50
 #define DCHAT_MAX_SERVERS       12
 #define DCHAT_MAX_CHANNELS      20
 #define DCHAT_MAX_NAME_LEN      40
