@@ -211,12 +211,6 @@ static int vis_multidisc_grouping(int ui, const int* c) {
 }
 static int vis_vm2(int ui, const int* c) { (void)ui; (void)c; return vm2_device_count > 0; }
 
-/* Single visibility check used by navigation and rendering */
-static inline int option_visible(int idx) {
-    if (!menu_options[idx].is_visible) return 1;
-    return menu_options[idx].is_visible(sf_ui[0], choices);
-}
-
 static menu_option_t menu_options[] = {
     [CHOICE_THEME]              = {"Style",                theme_choice_text,              THEME_CHOICES,  &sf_ui,                  NULL},
     [CHOICE_REGION]             = {"Theme",                region_choice_text,             3,              &sf_region,              NULL},
@@ -251,6 +245,15 @@ static int REGION_CHOICES = 3;
 static int choices[MENU_NUM_OPTIONS];
 static int current_choice = CHOICE_START;
 static int* input_timeout_ptr = NULL;
+
+/* Single visibility check used by navigation and rendering */
+static inline int option_visible(int idx) {
+    if (!menu_options[idx].is_visible) return 1;
+    return menu_options[idx].is_visible(sf_ui[0], choices);
+}
+
+/* Forward declaration - defined after saveload section */
+static void apply_choices_to_settings(void);
 
 #pragma endregion Settings_Menu
 
