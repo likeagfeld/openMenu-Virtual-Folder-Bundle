@@ -119,7 +119,6 @@ typedef enum CB_OPTION {
 
 #pragma region Settings_Menu
 
-static const char* menu_choice_text[] = {"Style", "Theme", "Aspect", "Beep", "Exit to 3D BIOS", "Sort", "Filter", "Multi-Disc", "Multi-Disc Grouping", "Artwork", "Display Index Numbers", "Disc Details", "Artwork", "Item Details", "Clock", "Marquee Speed", "VMU Game ID", "Boot Mode", "DC NOW! VMU"};
 static const char* theme_choice_text[] = {"LineDesc", "Grid3", "Scroll", "Folders"};
 static const char* region_choice_text[] = {"NTSC-U", "NTSC-J", "PAL"};
 static const char* region_choice_text_scroll[] = {"GDMENU"};
@@ -157,27 +156,9 @@ int start_cb = 0;
 static int psx_launcher_choice = 0;  /* 0 = Bleem!, 1 = Bloom */
 static const gd_item* cur_game_item = NULL;
 
-#define MENU_OPTIONS  ((int)(sizeof(menu_choice_text) / sizeof(menu_choice_text)[0]))
-#define MENU_CHOICES  (MENU_OPTIONS)
 #define THEME_CHOICES (sizeof(theme_choice_text) / sizeof(theme_choice_text)[0])
-static int REGION_CHOICES = (sizeof(region_choice_text) / sizeof(region_choice_text)[0]);
-#define ASPECT_CHOICES     (sizeof(aspect_choice_text) / sizeof(aspect_choice_text)[0])
-#define BEEP_CHOICES       (sizeof(beep_choice_text) / sizeof(beep_choice_text)[0]) /* Hidden from UI */
-#define BIOS_3D_CHOICES    (sizeof(bios_3d_choice_text) / sizeof(bios_3d_choice_text)[0])
-#define SORT_CHOICES       (sizeof(sort_choice_text) / sizeof(sort_choice_text)[0])
-#define FILTER_CHOICES     (sizeof(filter_choice_text) / sizeof(filter_choice_text)[0])
-#define MULTIDISC_CHOICES  (sizeof(multidisc_choice_text) / sizeof(multidisc_choice_text)[0])
-#define MULTIDISC_GROUPING_CHOICES (sizeof(multidisc_grouping_choice_text) / sizeof(multidisc_grouping_choice_text)[0])
-#define SCROLL_ART_CHOICES (sizeof(scroll_art_choice_text) / sizeof(scroll_art_choice_text)[0])
-#define SCROLL_INDEX_CHOICES (sizeof(scroll_index_choice_text) / sizeof(scroll_index_choice_text)[0])
-#define DISC_DETAILS_CHOICES (sizeof(disc_details_choice_text) / sizeof(disc_details_choice_text)[0])
-#define FOLDERS_ART_CHOICES (sizeof(folders_art_choice_text) / sizeof(folders_art_choice_text)[0])
-#define FOLDERS_ITEM_DETAILS_CHOICES (sizeof(folders_item_details_choice_text) / sizeof(folders_item_details_choice_text)[0])
-#define MARQUEE_SPEED_CHOICES (sizeof(marquee_speed_choice_text) / sizeof(marquee_speed_choice_text)[0])
-#define CLOCK_CHOICES (sizeof(clock_choice_text) / sizeof(clock_choice_text)[0])
-#define VM2_SEND_ALL_CHOICES (sizeof(vm2_send_all_choice_text) / sizeof(vm2_send_all_choice_text)[0])
-#define BOOT_MODE_CHOICES (sizeof(boot_mode_choice_text) / sizeof(boot_mode_choice_text)[0])
-#define DCNOW_VMU_CHOICES (sizeof(dcnow_vmu_choice_text) / sizeof(dcnow_vmu_choice_text)[0])
+#define SORT_CHOICES  (sizeof(sort_choice_text) / sizeof(sort_choice_text)[0])
+#define FILTER_CHOICES (sizeof(filter_choice_text) / sizeof(filter_choice_text)[0])
 
 typedef enum MENU_CHOICE {
     CHOICE_START,
@@ -203,21 +184,55 @@ typedef enum MENU_CHOICE {
     CHOICE_SAVE,
     CHOICE_DCNOW,
     CHOICE_CREDITS,
-    CHOICE_END = CHOICE_CREDITS
+    CHOICE_END = CHOICE_CREDITS,
+    MENU_NUM_OPTIONS
 } MENU_CHOICE;
+
+/* Visibility predicate: returns 1 if the option should be shown */
+typedef int (*menu_visible_fn)(int ui_mode, const int* choices);
+
+typedef struct menu_option {
+    const char*      label;         /* Display label ("Style", "Sort", etc.) */
+    const char**     value_labels;  /* Array of value strings (NULL for action rows) */
+    int              num_values;    /* Number of values (mutable for REGION with custom themes) */
+    uint8_t**        setting;       /* &sf_xxx pointer (NULL for Save/DCNOW/Credits) */
+    menu_visible_fn  is_visible;    /* NULL = always visible (Phase 3 populates this) */
+} menu_option_t;
+
+/* Visibility predicates defined in Phase 3 - for now all NULL (always visible) */
+
+static menu_option_t menu_options[] = {
+    [CHOICE_THEME]              = {"Style",                theme_choice_text,              THEME_CHOICES,  &sf_ui,                  NULL},
+    [CHOICE_REGION]             = {"Theme",                region_choice_text,             3,              &sf_region,              NULL},
+    [CHOICE_ASPECT]             = {"Aspect",               aspect_choice_text,             2,              &sf_aspect,              NULL},
+    [CHOICE_BEEP]               = {"Beep",                 beep_choice_text,               2,              &sf_beep,                NULL},
+    [CHOICE_BIOS_3D]            = {"Exit to 3D BIOS",      bios_3d_choice_text,            2,              &sf_bios_3d,             NULL},
+    [CHOICE_SORT]               = {"Sort",                 sort_choice_text,               SORT_CHOICES,   &sf_sort,                NULL},
+    [CHOICE_FILTER]             = {"Filter",               filter_choice_text,             FILTER_CHOICES, &sf_filter,              NULL},
+    [CHOICE_MULTIDISC]          = {"Multi-Disc",           multidisc_choice_text,          2,              &sf_multidisc,           NULL},
+    [CHOICE_MULTIDISC_GROUPING] = {"Multi-Disc Grouping",  multidisc_grouping_choice_text, 2,              &sf_multidisc_grouping,  NULL},
+    [CHOICE_SCROLL_ART]         = {"Artwork",              scroll_art_choice_text,         2,              &sf_scroll_art,          NULL},
+    [CHOICE_SCROLL_INDEX]       = {"Display Index Numbers", scroll_index_choice_text,      2,              &sf_scroll_index,        NULL},
+    [CHOICE_DISC_DETAILS]       = {"Disc Details",         disc_details_choice_text,       2,              &sf_disc_details,        NULL},
+    [CHOICE_FOLDERS_ART]        = {"Artwork",              folders_art_choice_text,         2,              &sf_folders_art,         NULL},
+    [CHOICE_FOLDERS_ITEM_DETAILS] = {"Item Details",       folders_item_details_choice_text, 2,            &sf_folders_item_details, NULL},
+    [CHOICE_CLOCK]              = {"Clock",                clock_choice_text,              3,              &sf_clock,               NULL},
+    [CHOICE_MARQUEE_SPEED]      = {"Marquee Speed",        marquee_speed_choice_text,      3,              &sf_marquee_speed,       NULL},
+    [CHOICE_VM2_SEND_ALL]       = {"VMU Game ID",          vm2_send_all_choice_text,       3,              &sf_vm2_send_all,        NULL},
+    [CHOICE_BOOT_MODE]          = {"Boot Mode",            boot_mode_choice_text,          4,              &sf_boot_mode,           NULL},
+    [CHOICE_DCNOW_VMU]          = {"DC NOW! VMU",          dcnow_vmu_choice_text,          2,              &sf_dcnow_vmu,           NULL},
+    [CHOICE_SAVE]               = {"Save/Load",            save_choice_text,               2,              NULL,                    NULL},
+    [CHOICE_DCNOW]              = {"DC NOW!",              NULL,                           0,              NULL,                    NULL},
+    [CHOICE_CREDITS]            = {"Credits",              credits_text,                   0,              NULL,                    NULL},
+};
+
+/* Convenience accessors replacing the old parallel arrays */
+#define MENU_CHOICES    (CHOICE_DCNOW_VMU + 1)  /* Number of regular settings (excludes Save/DCNOW/Credits) */
+static int REGION_CHOICES = 3;
 
 #define INPUT_TIMEOUT (10)
 
-static int choices[MENU_CHOICES + 1];
-static int choices_max[MENU_CHOICES + 1] = {
-    THEME_CHOICES,     3, ASPECT_CHOICES, BEEP_CHOICES, BIOS_3D_CHOICES, SORT_CHOICES, FILTER_CHOICES,
-    MULTIDISC_CHOICES, MULTIDISC_GROUPING_CHOICES, SCROLL_ART_CHOICES, SCROLL_INDEX_CHOICES, DISC_DETAILS_CHOICES, FOLDERS_ART_CHOICES, FOLDERS_ITEM_DETAILS_CHOICES, CLOCK_CHOICES, MARQUEE_SPEED_CHOICES, VM2_SEND_ALL_CHOICES, BOOT_MODE_CHOICES, DCNOW_VMU_CHOICES, 2 /* Apply/Save */};
-static const char** menu_choice_array[MENU_CHOICES] = {theme_choice_text,       region_choice_text,   aspect_choice_text,
-                                                       beep_choice_text,        bios_3d_choice_text,  sort_choice_text,
-                                                       filter_choice_text,      multidisc_choice_text, multidisc_grouping_choice_text,
-                                                       scroll_art_choice_text,  scroll_index_choice_text, disc_details_choice_text,
-                                                       folders_art_choice_text, folders_item_details_choice_text, clock_choice_text, marquee_speed_choice_text, vm2_send_all_choice_text,
-                                                       boot_mode_choice_text, dcnow_vmu_choice_text};
+static int choices[MENU_NUM_OPTIONS];
 static int current_choice = CHOICE_START;
 static int* input_timeout_ptr = NULL;
 
@@ -320,26 +335,26 @@ menu_setup(enum draw_state* state, theme_color* _colors, int* timeout_ptr, uint3
     choices[CHOICE_DCNOW_VMU] = sf_dcnow_vmu[0];
 
     if (choices[CHOICE_THEME] != UI_SCROLL && choices[CHOICE_THEME] != UI_FOLDERS) {
-        menu_choice_array[CHOICE_REGION] = region_choice_text;
+        menu_options[CHOICE_REGION].value_labels = region_choice_text;
         REGION_CHOICES = (sizeof(region_choice_text) / sizeof(region_choice_text)[0]);
-        choices_max[CHOICE_REGION] = REGION_CHOICES;
+        menu_options[CHOICE_REGION].num_values = REGION_CHOICES;
         /* Grab custom themes if we have them */
         custom_themes = theme_get_custom(&num_custom_themes);
         if (num_custom_themes > 0) {
             for (int i = 0; i < num_custom_themes; i++) {
-                choices_max[CHOICE_REGION]++;
+                menu_options[CHOICE_REGION].num_values++;
                 custom_theme_text[i] = custom_themes[i].name;
             }
         }
     } else {
         /* Assign appropriate default theme name based on UI mode */
         if (sf_ui[0] == UI_FOLDERS) {
-            menu_choice_array[CHOICE_REGION] = region_choice_text_folders;
+            menu_options[CHOICE_REGION].value_labels = region_choice_text_folders;
         } else {
-            menu_choice_array[CHOICE_REGION] = region_choice_text_scroll;
+            menu_options[CHOICE_REGION].value_labels = region_choice_text_scroll;
         }
         REGION_CHOICES = 1;
-        choices_max[CHOICE_REGION] = 1;
+        menu_options[CHOICE_REGION].num_values = 1;
         /* Load appropriate themes based on UI mode */
         if (sf_ui[0] == UI_FOLDERS) {
             custom_scroll = theme_get_folder(&num_custom_themes);
@@ -348,7 +363,7 @@ menu_setup(enum draw_state* state, theme_color* _colors, int* timeout_ptr, uint3
         }
         if (num_custom_themes > 0) {
             for (int i = 0; i < num_custom_themes; i++) {
-                choices_max[CHOICE_REGION]++;
+                menu_options[CHOICE_REGION].num_values++;
                 custom_theme_text[i] = custom_scroll[i].name;
             }
             if (sf_custom_theme[0] == THEME_ON) {
@@ -357,8 +372,8 @@ menu_setup(enum draw_state* state, theme_color* _colors, int* timeout_ptr, uint3
         }
     }
 
-    if (choices[CHOICE_REGION] >= choices_max[CHOICE_REGION]) {
-        choices[CHOICE_REGION] = choices_max[CHOICE_REGION] - 1;
+    if (choices[CHOICE_REGION] >= menu_options[CHOICE_REGION].num_values) {
+        choices[CHOICE_REGION] = menu_options[CHOICE_REGION].num_values - 1;
     }
 }
 
@@ -663,27 +678,27 @@ menu_choice_next(void) {
 static void
 menu_region_adj(void) {
     if (choices[CHOICE_THEME] != UI_SCROLL && choices[CHOICE_THEME] != UI_FOLDERS) {
-        menu_choice_array[CHOICE_REGION] = region_choice_text;
+        menu_options[CHOICE_REGION].value_labels = region_choice_text;
         REGION_CHOICES = (sizeof(region_choice_text) / sizeof(region_choice_text)[0]);
-        choices_max[CHOICE_REGION] = REGION_CHOICES;
+        menu_options[CHOICE_REGION].num_values = REGION_CHOICES;
         /* Grab custom themes if we have them */
         custom_themes = theme_get_custom(&num_custom_themes);
         if (num_custom_themes > 0) {
             for (int i = 0; i < num_custom_themes; i++) {
-                choices_max[CHOICE_REGION]++;
+                menu_options[CHOICE_REGION].num_values++;
                 custom_theme_text[i] = custom_themes[i].name;
             }
         }
     } else {
         /* Assign appropriate default theme name based on current Style selection */
         if (choices[CHOICE_THEME] == UI_FOLDERS) {
-            menu_choice_array[CHOICE_REGION] = region_choice_text_folders;
+            menu_options[CHOICE_REGION].value_labels = region_choice_text_folders;
             REGION_CHOICES = (sizeof(region_choice_text_folders) / sizeof(region_choice_text_folders)[0]);
         } else {
-            menu_choice_array[CHOICE_REGION] = region_choice_text_scroll;
+            menu_options[CHOICE_REGION].value_labels = region_choice_text_scroll;
             REGION_CHOICES = (sizeof(region_choice_text_scroll) / sizeof(region_choice_text_scroll)[0]);
         }
-        choices_max[CHOICE_REGION] = REGION_CHOICES;
+        menu_options[CHOICE_REGION].num_values = REGION_CHOICES;
         /* Load appropriate themes based on UI mode */
         if (choices[CHOICE_THEME] == UI_FOLDERS) {
             custom_scroll = theme_get_folder(&num_custom_themes);
@@ -692,14 +707,14 @@ menu_region_adj(void) {
         }
         if (num_custom_themes > 0) {
             for (int i = 0; i < num_custom_themes; i++) {
-                choices_max[CHOICE_REGION]++;
+                menu_options[CHOICE_REGION].num_values++;
                 custom_theme_text[i] = custom_scroll[i].name;
             }
         }
     }
 
-    if (choices[CHOICE_REGION] >= choices_max[CHOICE_REGION]) {
-        choices[CHOICE_REGION] = choices_max[CHOICE_REGION] - 1;
+    if (choices[CHOICE_REGION] >= menu_options[CHOICE_REGION].num_values) {
+        choices[CHOICE_REGION] = menu_options[CHOICE_REGION].num_values - 1;
     }
 }
 
@@ -760,7 +775,7 @@ menu_choice_right(void) {
     }
     choices[current_choice]++;
     /* In Folders mode, limit Sort to 2 options */
-    int max_choice = choices_max[current_choice];
+    int max_choice = menu_options[current_choice].num_values;
     if (current_choice == CHOICE_SORT && sf_ui[0] == UI_FOLDERS) {
         max_choice = SORT_CHOICES_FOLDERS;
     }
@@ -1037,7 +1052,7 @@ draw_menu_tr(void) {
         /* Calculate visible options for height.
          * Extra rows after options: Save/Apply/Credits, spacing, GDEMU version, Build version = 4 rows
          * The +4 in the height formula accounts for these rows */
-        int visible_options = MENU_OPTIONS - 1;  /* Hide BEEP */
+        int visible_options = MENU_CHOICES - 1;  /* Hide BEEP */
         if (sf_ui[0] == UI_SCROLL) {
             visible_options -= 4;  /* Hide Aspect, FOLDERS_ART, FOLDERS_ITEM_DETAILS, CLOCK, MULTIDISC_GROUPING (5 items, -1 for padding) */
         } else if (sf_ui[0] == UI_FOLDERS) {
@@ -1125,14 +1140,14 @@ draw_menu_tr(void) {
                 font_bmp_set_color(text_color);
             }
             if (i == CHOICE_REGION && (choices[i] >= REGION_CHOICES)) {
-                string_outer_concat(line_buf, menu_choice_text[i], custom_theme_text[(int)choices[i] - REGION_CHOICES],
+                string_outer_concat(line_buf, menu_options[i].label, custom_theme_text[(int)choices[i] - REGION_CHOICES],
                                     38);
             } else if (i == CHOICE_SORT && sf_ui[0] == UI_FOLDERS) {
                 /* In Folders mode, use Folders-specific sort text and clamp value */
                 int sort_idx = choices[i] < SORT_CHOICES_FOLDERS ? choices[i] : 0;
-                string_outer_concat(line_buf, menu_choice_text[i], sort_choice_text_folders[sort_idx], 38);
+                string_outer_concat(line_buf, menu_options[i].label, sort_choice_text_folders[sort_idx], 38);
             } else {
-                string_outer_concat(line_buf, menu_choice_text[i], menu_choice_array[i][(int)choices[i]], 38);
+                string_outer_concat(line_buf, menu_options[i].label, menu_options[i].value_labels[(int)choices[i]], 38);
             }
             font_bmp_draw_main(x_item, cur_y, line_buf);
         }
@@ -1186,7 +1201,7 @@ draw_menu_tr(void) {
         const int line_height = 32;
         const int width = 400;
         /* Exclude: BEEP, SCROLL_ART, SCROLL_INDEX, DISC_DETAILS, FOLDERS_ART, FOLDERS_ITEM_DETAILS, MARQUEE_SPEED, CLOCK, MULTIDISC_GROUPING (9 items, -1 for padding) */
-        int visible_options = MENU_OPTIONS - 8;
+        int visible_options = MENU_CHOICES - 8;
         /* Dynamically hide VM2_SEND_ALL when no VM2 devices detected */
         if (vm2_device_count == 0) {
             visible_options -= 1;
@@ -1258,13 +1273,13 @@ draw_menu_tr(void) {
             if (i == current_choice) {
                 temp_color = highlight_color;
             }
-            font_bmf_draw(x_item, cur_y, temp_color, menu_choice_text[i]);
+            font_bmf_draw(x_item, cur_y, temp_color, menu_options[i].label);
 
             if (i == CHOICE_REGION && (choices[i] >= REGION_CHOICES)) {
                 font_bmf_draw_centered(x_choice, cur_y, temp_color,
                                        custom_theme_text[(int)choices[i] - REGION_CHOICES]);
             } else {
-                font_bmf_draw_centered(x_choice, cur_y, temp_color, menu_choice_array[i][(int)choices[i]]);
+                font_bmf_draw_centered(x_choice, cur_y, temp_color, menu_options[i].value_labels[(int)choices[i]]);
             }
         }
 
