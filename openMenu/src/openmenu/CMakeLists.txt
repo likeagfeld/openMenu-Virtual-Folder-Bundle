@@ -36,6 +36,7 @@ set(OPENMENU_SOURCES
         src/dcnow/dcnow_net_init.c
         src/dcnow/dcnow_vmu.c
         src/dcnow/dcnow_menu.c
+        src/dcnow/dcnow_worker.c
 )
 
 add_executable(openmenu ${OPENMENU_SOURCES})
@@ -44,6 +45,7 @@ add_executable(openmenu ${OPENMENU_SOURCES})
 target_compile_definitions(openmenu PRIVATE
     OPENMENU_BUILD_VERSION="${OPENMENU_VERSION}"
     # DCNOW_USE_STUB_DATA=1  # Uncomment for stub data testing on non-DC platforms
+    DCNOW_ASYNC=1           # Uncomment for async (non-blocking) network operations
     # Real network implementation is enabled by default on Dreamcast (_arch_dreamcast)
 )
 

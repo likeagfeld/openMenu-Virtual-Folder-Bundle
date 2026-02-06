@@ -28,8 +28,16 @@ static void scif_write_string(const char* str) {
 /* Status callback for visual feedback */
 static dcnow_status_callback_t status_callback = NULL;
 
+/* When false, update_status() skips the 500ms sleep after callback.
+ * The async worker thread disables this so it doesn't block between steps. */
+static bool status_sleep_enabled = true;
+
 void dcnow_set_status_callback(dcnow_status_callback_t callback) {
     status_callback = callback;
+}
+
+void dcnow_set_status_sleep_enabled(bool enabled) {
+    status_sleep_enabled = enabled;
 }
 
 static void update_status(const char* message) {
@@ -47,12 +55,13 @@ static void update_status(const char* message) {
 
     if (status_callback) {
         printf("DC Now: Calling status callback...\n");
-        /* Call callback which will draw the message */
-        /* Callback is responsible for full scene rendering */
+        /* Call callback which will draw the message (sync) or update buffer (async) */
         status_callback(message);
         printf("DC Now: Status callback returned\n");
-        /* Give user time to see the message */
-        timer_spin_sleep(500);  /* 500ms delay so messages are visible */
+        /* Give user time to see the message (skipped in async worker mode) */
+        if (status_sleep_enabled) {
+            timer_spin_sleep(500);  /* 500ms delay so messages are visible */
+        }
     } else {
         printf("DC Now: WARNING - No status callback set!\n");
         logfile = fopen("/ram/DCNOW_LOG.TXT", "a");

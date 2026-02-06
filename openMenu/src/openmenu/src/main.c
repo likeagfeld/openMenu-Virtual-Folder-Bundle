@@ -34,6 +34,9 @@
 #include "vm2/vm2_api.h"
 #include "dcnow/dcnow_net_init.h"
 #include "dcnow/dcnow_vmu.h"
+#ifdef DCNOW_ASYNC
+#include "dcnow/dcnow_worker.h"
+#endif
 
 /* UI Collection */
 #include "ui/ui_grid.h"
@@ -290,6 +293,10 @@ translate_input(void) {
         INPT_ButtonEx(BTN_START, BTN_HELD)) {
         printf("ABXY+Start detected - disconnecting and resetting...\n");
 
+#ifdef DCNOW_ASYNC
+        /* Shutdown async worker thread before reset */
+        dcnow_worker_shutdown();
+#endif
         /* Disconnect modem/PPP before reset */
         dcnow_net_disconnect();
 
@@ -487,6 +494,10 @@ main(int argc, char* argv[]) {
 
 void
 exit_to_bios_ex(int do_mount, int do_send_id) {
+#ifdef DCNOW_ASYNC
+    /* Shutdown async worker thread before disconnecting */
+    dcnow_worker_shutdown();
+#endif
     /* Disconnect modem/PPP before exiting to ensure clean state */
     dcnow_net_disconnect();
 

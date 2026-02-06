@@ -1,6 +1,8 @@
 #ifndef DCNOW_NET_INIT_H
 #define DCNOW_NET_INIT_H
 
+#include <stdbool.h>
+
 /**
  * Connection method for DC Now network initialization
  */
@@ -52,6 +54,13 @@ int dcnow_net_init_with_method(dcnow_connection_method_t method);
  * @deprecated Use dcnow_net_init_with_method() instead
  */
 int dcnow_net_early_init(void);
+
+/**
+ * Enable or disable the status sleep (500ms delay after each status message).
+ * The async worker thread disables this so it doesn't sleep between steps.
+ * @param enabled - true to sleep after status updates (default), false to skip
+ */
+void dcnow_set_status_sleep_enabled(bool enabled);
 
 /**
  * Disconnect and reset the network connection (modem/serial/PPP)
