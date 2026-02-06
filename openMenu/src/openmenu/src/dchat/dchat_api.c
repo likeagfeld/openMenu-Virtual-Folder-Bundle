@@ -451,19 +451,27 @@ int dchat_fetch_channels(dchat_data_t *data, const char *server_id, uint32_t tim
         "\r\n",
         server_id, data->host, data->port, data->session_id);
 
-    char response[8192];
-    int result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
+    /* Server page includes server icons + channel list; can be large */
+    char *response = (char *)malloc(16384);
+    if (!response) {
+        strcpy(data->error_message, "Out of memory");
+        close(sock);
+        return -20;
+    }
+    int result = dchat_http_exchange(sock, request, req_len, response, 16384, timeout_ms);
     close(sock);
 
     if (result < 0) {
         snprintf(data->error_message, sizeof(data->error_message),
                 "Channel list failed (%d)", result);
+        free(response);
         return result;
     }
 
     const char *body = dchat_http_body(response);
     if (!body) {
         strcpy(data->error_message, "Invalid response");
+        free(response);
         return -7;
     }
 
@@ -508,30 +516,31 @@ int dchat_fetch_channels(dchat_data_t *data, const char *server_id, uint32_t tim
         strcpy(data->channels[data->channel_count].id, id_buf);
 
         /* Extract channel name: get all content between <a> opening and </a>,
-         * strip HTML tags (handles nested <font> etc.), decode entities */
+         * strip HTML tags (handles nested <font> etc.), decode entities.
+         * Use a temp buffer since raw HTML with <font> tags can be 100+ bytes
+         * but DCHAT_MAX_NAME_LEN is small. Must strip tags first, then copy. */
         const char *a_open_end = strchr(channels_str, '>');
         const char *a_close = strstr(channels_str, "</a>");
         if (a_open_end && a_close && a_open_end < a_close) {
             a_open_end++;
-            int content_len = (int)(a_close - a_open_end);
-            if (content_len > DCHAT_MAX_NAME_LEN - 1) content_len = DCHAT_MAX_NAME_LEN - 1;
-            memcpy(data->channels[data->channel_count].name, a_open_end, content_len);
-            data->channels[data->channel_count].name[content_len] = '\0';
-            strip_html_tags(data->channels[data->channel_count].name);
-            html_decode_inplace(data->channels[data->channel_count].name);
+            int raw_len = (int)(a_close - a_open_end);
+            char name_buf[256];
+            if (raw_len > (int)sizeof(name_buf) - 1) raw_len = sizeof(name_buf) - 1;
+            memcpy(name_buf, a_open_end, raw_len);
+            name_buf[raw_len] = '\0';
+            strip_html_tags(name_buf);
+            html_decode_inplace(name_buf);
 
             /* Trim leading # and whitespace */
-            char *trimmed = data->channels[data->channel_count].name;
+            char *trimmed = name_buf;
             while (*trimmed == '#' || *trimmed == ' ' || *trimmed == '\n' || *trimmed == '\r') trimmed++;
-            if (trimmed != data->channels[data->channel_count].name) {
-                memmove(data->channels[data->channel_count].name, trimmed, strlen(trimmed) + 1);
-            }
             /* Trim trailing whitespace */
-            int ni = strlen(data->channels[data->channel_count].name);
-            while (ni > 0 && (data->channels[data->channel_count].name[ni - 1] == ' ' ||
-                              data->channels[data->channel_count].name[ni - 1] == '\n')) {
-                data->channels[data->channel_count].name[--ni] = '\0';
-            }
+            int ni = strlen(trimmed);
+            while (ni > 0 && (trimmed[ni - 1] == ' ' || trimmed[ni - 1] == '\n'))
+                trimmed[--ni] = '\0';
+
+            strncpy(data->channels[data->channel_count].name, trimmed, DCHAT_MAX_NAME_LEN - 1);
+            data->channels[data->channel_count].name[DCHAT_MAX_NAME_LEN - 1] = '\0';
         }
 
         /* Fallback name */
@@ -549,6 +558,7 @@ int dchat_fetch_channels(dchat_data_t *data, const char *server_id, uint32_t tim
     }
 
     printf("Discross: Found %d channels\n", data->channel_count);
+    free(response);
     return 0;
 
 #else
