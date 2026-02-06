@@ -4455,6 +4455,10 @@ static void dchat_do_logout(void) {
     dchat_is_loading = false;
     dchat_choice = 0;
     dchat_scroll_offset = 0;
+    /* Reset input/OSK state */
+    dchat_osk_active = false;
+    memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
+    dchat_input_pos = 0;
     /* Go to login view with credentials pre-filled */
     dchat_view = DCHAT_VIEW_LOGIN;
     printf("Discross: Logged out\n");
@@ -5151,8 +5155,8 @@ draw_discord_chat_tr(void) {
 
     /* Check if background connection thread completed */
     if (dchat_connect_done && dchat_is_loading && dchat_view == DCHAT_VIEW_CONNECT) {
+        int net_result = dchat_connect_result;  /* Read result before clearing flag */
         dchat_connect_done = false;
-        int net_result = dchat_connect_result;
 
         if (net_result < 0) {
             printf("Discross: Connection failed: %d\n", net_result);
@@ -5174,7 +5178,8 @@ draw_discord_chat_tr(void) {
                 if (dchat_cred_host[0]) {
                     strncpy(dchat_input_buf, dchat_cred_host, DCHAT_INPUT_BUF_LEN - 1);
                 } else {
-                    strcpy(dchat_input_buf, "discross.net");
+                    strncpy(dchat_input_buf, "discross.net", DCHAT_INPUT_BUF_LEN - 1);
+                    dchat_input_buf[DCHAT_INPUT_BUF_LEN - 1] = '\0';
                 }
                 dchat_input_pos = strlen(dchat_input_buf);
             }

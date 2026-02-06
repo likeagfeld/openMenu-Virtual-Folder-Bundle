@@ -326,7 +326,8 @@ void dchat_set_config(dchat_data_t *data, const char *host, int port,
         strncpy(data->host, host, DCHAT_MAX_HOST_LEN - 1);
         data->host[DCHAT_MAX_HOST_LEN - 1] = '\0';
     } else {
-        strcpy(data->host, "discross.net");
+        strncpy(data->host, "discross.net", DCHAT_MAX_HOST_LEN - 1);
+        data->host[DCHAT_MAX_HOST_LEN - 1] = '\0';
     }
 
     data->port = (port > 0) ? port : DCHAT_DEFAULT_PORT;
@@ -534,6 +535,7 @@ int dchat_fetch_channels(dchat_data_t *data, const char *server_id, uint32_t tim
     if (!data || !data->logged_in || !server_id) return -1;
 
     strncpy(data->current_server_id, server_id, DCHAT_MAX_ID_LEN - 1);
+    data->current_server_id[DCHAT_MAX_ID_LEN - 1] = '\0';
 
 #ifdef _arch_dreamcast
     int sock = dchat_connect(data->host, data->port);
@@ -677,6 +679,7 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
     if (!data || !data->logged_in || !channel_id) return -1;
 
     strncpy(data->current_channel_id, channel_id, DCHAT_MAX_ID_LEN - 1);
+    data->current_channel_id[DCHAT_MAX_ID_LEN - 1] = '\0';
 
 #ifdef _arch_dreamcast
     int sock = dchat_connect(data->host, data->port);
