@@ -826,16 +826,14 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
         channel_id, data->host, data->port, data->session_id);
 
     /* Messages page has a massive <head> section (30-40KB of CSS/JS/fonts)
-     * before any message content. On a 33.6k modem this wastes our buffer
-     * and causes timeouts before reaching the newest messages at the end.
+     * before any message content. We skip to <body> to avoid wasting buffer.
      *
-     * Solution: Use dchat_http_exchange_skip() to stream through and discard
-     * the <head> section, only buffering from <body onward. This means our
-     * 64KB buffer is used entirely for message HTML, not wasted on CSS/JS.
-     *
-     * Discross returns messages oldest-first (sorted by createdTimestamp),
-     * so the newest messages are at the END of the HTML body. */
-    const int resp_size = 65536;  /* 64KB - enough for ~50+ messages without head */
+     * Discross returns up to 100 messages oldest-first. With larsenv's inline
+     * styles each message is ~600 bytes, so 100 messages = ~60KB of HTML.
+     * Plus navigation/forms/scripts around the messages. Use 256KB buffer
+     * (temporary, freed after parsing) to ensure we capture ALL messages
+     * including the newest at the end. */
+    const int resp_size = 262144;  /* 256KB after head skip */
     char *response = (char *)malloc(resp_size);
     if (!response) {
         strcpy(data->error_message, "Out of memory");
@@ -844,8 +842,10 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
     }
 
     /* Skip past the <head> section - search for <body to start buffering.
-     * Use longer timeout (30s) since modem connections are slow. */
-    uint32_t msg_timeout = timeout_ms < 30000 ? 30000 : timeout_ms;
+     * Use generous timeout since modem connections are slow (~4KB/s).
+     * The timeout resets on each received chunk so it's really an inactivity
+     * timeout, not a total transfer timeout. */
+    uint32_t msg_timeout = timeout_ms < 15000 ? 15000 : timeout_ms;
     int result = dchat_http_exchange_skip(sock, request, req_len,
                                           response, resp_size, msg_timeout, "<body");
     dchat_close_socket(sock);
