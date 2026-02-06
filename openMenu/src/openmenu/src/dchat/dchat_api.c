@@ -901,15 +901,16 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
         if (!content_end) break;
 
         /* --- Extract username ---
-         * Search backwards from messagecontent (up to 500 chars) for the
-         * username. In Heath123: <font class="name" ...>USER</font>.
+         * Search backwards from messagecontent for the username.
+         * Larsenv template has long inline styles, so we need ~800 chars lookback.
+         * In Heath123: <font class="name" ...>USER</font>.
          * In larsenv: first <span ...>USER</span> after <div class="message". */
         int slot = total_parsed % DCHAT_MAX_MESSAGES;
         dchat_message_t *msg = &data->messages[slot];
         msg->username[0] = '\0';
         msg->content[0] = '\0';
 
-        const char *search_back = (mc - 500 > pos) ? mc - 500 : pos;
+        const char *search_back = (mc - 1000 > pos) ? mc - 1000 : pos;
         const char *name_start = NULL;
         const char *name_end = NULL;
 
@@ -937,7 +938,14 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
             }
         }
 
-        /* Fallback: first <span> after last <div class="message" (larsenv) */
+        /* Fallback: find username span in larsenv template.
+         * Structure: <div class="message"><div style="display:flex;">
+         *   <span onclick="..." style="font-weight:600;...">USERNAME</span>
+         *   <span style="font-size:12px;...">TIMESTAMP</span>
+         * </div>...
+         * The username span has onclick= or font-weight. The timestamp span
+         * has font-size:12px. We look for onclick= first as a reliable marker
+         * of the username span, falling back to first <span> if needed. */
         if (!name_start || !name_end) {
             const char *temp = search_back;
             const char *msg_block = search_back;
@@ -948,13 +956,70 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
                     temp = found + 20;
                 } else break;
             }
-            const char *span_tag = strstr(msg_block, "<span");
-            if (span_tag && span_tag < mc) {
-                const char *span_close = strchr(span_tag, '>');
-                if (span_close && span_close < mc) {
-                    name_start = span_close + 1;
-                    name_end = strstr(name_start, "</span>");
-                    if (name_end && name_end > mc) name_end = NULL;
+
+            /* Try onclick= span first (larsenv username span) */
+            const char *onclick_tag = strstr(msg_block, "onclick=");
+            if (onclick_tag && onclick_tag < mc) {
+                /* Found onclick attribute - back up to find the <span opening */
+                const char *span_start = onclick_tag;
+                while (span_start > msg_block && strncmp(span_start, "<span", 5) != 0)
+                    span_start--;
+                if (strncmp(span_start, "<span", 5) == 0) {
+                    const char *span_close = strchr(onclick_tag, '>');
+                    if (span_close && span_close < mc) {
+                        name_start = span_close + 1;
+                        name_end = strstr(name_start, "</span>");
+                        if (name_end && name_end > mc) name_end = NULL;
+                    }
+                }
+            }
+
+            /* If onclick didn't work, try font-weight span */
+            if (!name_start || !name_end) {
+                const char *fw_tag = strstr(msg_block, "font-weight");
+                if (fw_tag && fw_tag < mc) {
+                    const char *span_start = fw_tag;
+                    while (span_start > msg_block && strncmp(span_start, "<span", 5) != 0)
+                        span_start--;
+                    if (strncmp(span_start, "<span", 5) == 0) {
+                        const char *span_close = strchr(fw_tag, '>');
+                        if (span_close && span_close < mc) {
+                            name_start = span_close + 1;
+                            name_end = strstr(name_start, "</span>");
+                            if (name_end && name_end > mc) name_end = NULL;
+                        }
+                    }
+                }
+            }
+
+            /* Last resort: first <span> after message block, but skip if it
+             * looks like a timestamp (contains AM/PM or digits at start) */
+            if (!name_start || !name_end) {
+                const char *span_tag = strstr(msg_block, "<span");
+                if (span_tag && span_tag < mc) {
+                    const char *span_close = strchr(span_tag, '>');
+                    if (span_close && span_close < mc) {
+                        const char *candidate = span_close + 1;
+                        const char *candidate_end = strstr(candidate, "</span>");
+                        if (candidate_end && candidate_end < mc) {
+                            /* Check if this looks like a timestamp (starts with digit) */
+                            const char *c = candidate;
+                            while (*c == ' ' || *c == '\n') c++;
+                            if (*c >= '0' && *c <= '9') {
+                                /* Probably timestamp - try next span */
+                                const char *next_span = strstr(candidate_end + 7, "<span");
+                                if (next_span && next_span < mc) {
+                                    /* skip this, don't use timestamp as username */
+                                } else {
+                                    name_start = candidate;
+                                    name_end = candidate_end;
+                                }
+                            } else {
+                                name_start = candidate;
+                                name_end = candidate_end;
+                            }
+                        }
+                    }
                 }
             }
         }
