@@ -419,7 +419,13 @@ menu_accept(void) {
         return;
     }
     if (current_choice == CHOICE_SAVE) {
-        /* update Global Settings */
+        /* Save/Load opens VMU browser without applying settings yet */
+        if (choices[CHOICE_SAVE] == 0 /* Save/Load */) {
+            saveload_setup(state_ptr, stored_colors, input_timeout_ptr, menu_title_color);
+            return;
+        }
+
+        /* Apply: update Global Settings */
         sf_ui[0] = choices[CHOICE_THEME];
         sf_region[0] = choices[CHOICE_REGION];
         sf_aspect[0] = choices[CHOICE_ASPECT];
@@ -477,9 +483,6 @@ menu_accept(void) {
             list_set_genre_sort((FLAGS_GENRE)choices[CHOICE_FILTER] - 1, choices[CHOICE_SORT]);
         }
 
-        if (choices[CHOICE_SAVE] == 0 /* Save */) {
-            savefile_save();
-        }
         extern void reload_ui(void);
         reload_ui();
     }
@@ -2001,6 +2004,7 @@ static void saveload_apply_choices_to_settings(void) {
     sf_clock[0] = choices[CHOICE_CLOCK];
     sf_vm2_send_all[0] = choices[CHOICE_VM2_SEND_ALL];
     sf_boot_mode[0] = choices[CHOICE_BOOT_MODE];
+    sf_dcnow_vmu[0] = choices[CHOICE_DCNOW_VMU];
 
     /* Handle custom theme encoding */
     if (choices[CHOICE_THEME] != UI_SCROLL && choices[CHOICE_THEME] != UI_FOLDERS && sf_region[0] > REGION_END) {
@@ -2156,6 +2160,8 @@ saveload_setup(enum draw_state* state, theme_color* _colors, int* timeout_ptr, u
             break;
         }
     }
+
+    *state = DRAW_SAVELOAD;
 }
 
 

@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(while read hash msg)",
+      "Bash(do git show \"$hash:openMenu/src/openmenu_settings/include/openmenu_settings.h\")",
+      "Bash(echo:*)",
+      "Bash(done)",
+      "Bash(ls:*)"
     ]
   }
 }

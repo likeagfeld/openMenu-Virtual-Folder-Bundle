@@ -189,14 +189,22 @@ setup_savefile(crayon_savefile_details_t* details) {
 
 int8_t
 find_first_valid_savefile_device(crayon_savefile_details_t* details) {
-    int8_t err = -1;
+    /* First pass: prefer devices WITH an existing save file */
     for (int8_t i = 0; i < CRAYON_SF_NUM_SAVE_DEVICES; ++i) {
-        err = crayon_savefile_set_device(details, i);
-        if (!err) {
-            break;
+        if (crayon_savefile_set_device(details, i) == 0) {
+            int8_t status = crayon_savefile_save_device_status(details, i);
+            if (status == CRAYON_SF_STATUS_CURRENT_SF || status == CRAYON_SF_STATUS_OLD_SF_ROOM) {
+                return 0;
+            }
         }
     }
-    return err;
+    /* Second pass: fall back to any ready device (including empty ones) */
+    for (int8_t i = 0; i < CRAYON_SF_NUM_SAVE_DEVICES; ++i) {
+        if (crayon_savefile_set_device(details, i) == 0) {
+            return 0;
+        }
+    }
+    return -1;
 }
 
 void
