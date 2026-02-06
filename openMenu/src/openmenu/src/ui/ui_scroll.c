@@ -24,6 +24,7 @@
 #include "ui/ui_menu_credits.h"
 #include "ui/dc/input.h"
 
+#include "ui/ui_bg.h"
 #include "ui/ui_scroll.h"
 
 #define UNUSED __attribute__((unused))
@@ -189,17 +190,7 @@ static bool direction_last = false;
 static bool direction_current = false;
 #define direction_held (direction_last & direction_current)
 
-static void
-draw_bg_layers(void) {
-    {
-        const dimen_RECT left = {.x = 0, .y = 0, .w = 512, .h = 480};
-        draw_draw_sub_image(0, 0, 512, 480, COLOR_WHITE, &txr_bg_left, &left);
-    }
-    {
-        const dimen_RECT right = {.x = 0, .y = 0, .w = 128, .h = 480};
-        draw_draw_sub_image(512, 0, 128, 480, COLOR_WHITE, &txr_bg_right, &right);
-    }
-}
+/* draw_bg_layers removed - now uses shared ui_bg_draw() */
 
 static void
 marquee_reset(void) {
@@ -644,6 +635,8 @@ FUNCTION(UI_NAME, init) {
     draw_load_texture_buffer(cur_theme->bg_right, &txr_bg_right, texman_get_tex_data(temp));
     texman_reserve_memory(txr_bg_right.width, txr_bg_right.height, 2 /* 16Bit */);
 
+    ui_bg_set(&txr_bg_left, &txr_bg_right);
+
     font_bmp_init(cur_theme->font, 8, 16);
 
     printf("Texture scratch free: %d/%d KB (%d/%d bytes)\n", texman_get_space_available() / 1024,
@@ -755,7 +748,7 @@ FUNCTION_INPUT(UI_NAME, handle_input) {
 }
 
 FUNCTION(UI_NAME, drawOP) {
-    draw_bg_layers();
+    ui_bg_draw();
 
     switch (draw_current) {
         case DRAW_MENU: {

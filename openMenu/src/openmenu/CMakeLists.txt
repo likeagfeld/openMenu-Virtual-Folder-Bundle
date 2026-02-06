@@ -24,6 +24,7 @@ set(OPENMENU_SOURCES
         src/ui/animation.c
         src/ui/draw_kos.c
         src/ui/theme_manager.c
+        src/ui/ui_bg.c
         src/ui/ui_grid.c
         src/ui/ui_line_desc.c
         src/ui/ui_line_large.c

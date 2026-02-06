@@ -24,6 +24,7 @@
 #include "ui/ui_menu_credits.h"
 #include "ui/dc/input.h"
 
+#include "ui/ui_bg.h"
 #include "ui/ui_grid.h"
 
 /* Scaling */
@@ -141,17 +142,7 @@ recalculate_aspect(CFG_ASPECT aspect) {
     TILE_SIZE_Y = ((TILE_AREA_HEIGHT - ((ROWS - 1) * VERTICAL_SPACING)) / ROWS);
 }
 
-static void
-draw_bg_layers(void) {
-    {
-        const dimen_RECT left = {.x = 0, .y = 0, .w = 512, .h = 480};
-        draw_draw_sub_image(0, 0, 512, 480, COLOR_WHITE, &txr_bg_left, &left);
-    }
-    {
-        const dimen_RECT right = {.x = 0, .y = 0, .w = 128, .h = 480};
-        draw_draw_sub_image(512, 0, 128, 480, COLOR_WHITE, &txr_bg_right, &right);
-    }
-}
+/* draw_bg_layers removed - now uses shared ui_bg_draw() */
 
 static inline int
 current_selected(void) {
@@ -664,6 +655,8 @@ FUNCTION(UI_NAME, init) {
         texman_reserve_memory(txr_bg_right.width, txr_bg_right.height, 2 /* 16Bit */);
     }
 
+    ui_bg_set(&txr_bg_left, &txr_bg_right);
+
     font_bmf_init("FONT/BASILEA.FNT", "FONT/BASILEA_W.PVR", sf_aspect[0]);
 
     printf("Texture scratch free: %d/%d KB (%d/%d bytes)\n", texman_get_space_available() / 1024,
@@ -790,7 +783,7 @@ FUNCTION_INPUT(UI_NAME, handle_input) {
 }
 
 FUNCTION(UI_NAME, drawOP) {
-    draw_bg_layers();
+    ui_bg_draw();
 
     switch (draw_current) {
         case DRAW_MENU: {
