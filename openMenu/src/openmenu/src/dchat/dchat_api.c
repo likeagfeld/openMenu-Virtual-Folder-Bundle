@@ -171,7 +171,7 @@ static void url_encode(const char *src, char *dst, int dst_size) {
 }
 
 /**
- * Decode basic HTML entities (&amp; &lt; &gt; &quot; &#39;).
+ * Decode basic HTML entities (&amp; &lt; &gt; &quot; &#39; &nbsp;).
  */
 static void html_decode_inplace(char *str) {
     char *r = str, *w = str;
@@ -182,6 +182,7 @@ static void html_decode_inplace(char *str) {
             else if (strncmp(r, "&gt;", 4) == 0) { *w++ = '>'; r += 4; }
             else if (strncmp(r, "&quot;", 6) == 0) { *w++ = '"'; r += 6; }
             else if (strncmp(r, "&#39;", 5) == 0) { *w++ = '\''; r += 5; }
+            else if (strncmp(r, "&nbsp;", 6) == 0) { *w++ = ' '; r += 6; }
             else { *w++ = *r++; }
         } else {
             *w++ = *r++;
@@ -506,22 +507,27 @@ int dchat_fetch_channels(dchat_data_t *data, const char *server_id, uint32_t tim
 
         strcpy(data->channels[data->channel_count].id, id_buf);
 
-        /* Try to find channel name: look for ">" after the closing quote, take text until "<" */
-        const char *close_tag = strchr(channels_str, '>');
-        if (close_tag) {
-            close_tag++;
-            int ni = 0;
-            /* Skip leading # and whitespace */
-            while (*close_tag == '#' || *close_tag == ' ') close_tag++;
-            while (close_tag[ni] && close_tag[ni] != '<' && ni < DCHAT_MAX_NAME_LEN - 1) {
-                data->channels[data->channel_count].name[ni] = close_tag[ni];
-                ni++;
-            }
-            data->channels[data->channel_count].name[ni] = '\0';
-            html_decode_inplace(data->channels[data->channel_count].name);
+        /* Extract channel name: get all content between <a> opening and </a>,
+         * strip HTML tags (handles nested <font> etc.), decode entities */
+        const char *a_open_end = strchr(channels_str, '>');
+        const char *a_close = strstr(channels_str, "</a>");
+        if (a_open_end && a_close && a_open_end < a_close) {
+            a_open_end++;
+            int content_len = (int)(a_close - a_open_end);
+            if (content_len > DCHAT_MAX_NAME_LEN - 1) content_len = DCHAT_MAX_NAME_LEN - 1;
+            memcpy(data->channels[data->channel_count].name, a_open_end, content_len);
+            data->channels[data->channel_count].name[content_len] = '\0';
             strip_html_tags(data->channels[data->channel_count].name);
+            html_decode_inplace(data->channels[data->channel_count].name);
 
+            /* Trim leading # and whitespace */
+            char *trimmed = data->channels[data->channel_count].name;
+            while (*trimmed == '#' || *trimmed == ' ' || *trimmed == '\n' || *trimmed == '\r') trimmed++;
+            if (trimmed != data->channels[data->channel_count].name) {
+                memmove(data->channels[data->channel_count].name, trimmed, strlen(trimmed) + 1);
+            }
             /* Trim trailing whitespace */
+            int ni = strlen(data->channels[data->channel_count].name);
             while (ni > 0 && (data->channels[data->channel_count].name[ni - 1] == ' ' ||
                               data->channels[data->channel_count].name[ni - 1] == '\n')) {
                 data->channels[data->channel_count].name[--ni] = '\0';
@@ -531,7 +537,7 @@ int dchat_fetch_channels(dchat_data_t *data, const char *server_id, uint32_t tim
         /* Fallback name */
         if (data->channels[data->channel_count].name[0] == '\0') {
             snprintf(data->channels[data->channel_count].name, DCHAT_MAX_NAME_LEN,
-                    "#%s", id_buf);
+                    "channel-%s", id_buf);
         }
 
         printf("Discross: Channel [%d] %s = %s\n", data->channel_count,
@@ -578,15 +584,16 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
         "\r\n",
         channel_id, data->host, data->port, data->session_id);
 
-    /* Messages page can be large - allocate on heap */
-    char *response = (char *)malloc(16384);
+    /* Messages page can be large (CSS/JS overhead + messages) - allocate on heap */
+    const int resp_size = 32768;
+    char *response = (char *)malloc(resp_size);
     if (!response) {
         strcpy(data->error_message, "Out of memory");
         close(sock);
         return -20;
     }
 
-    int result = dchat_http_exchange(sock, request, req_len, response, 16384, timeout_ms);
+    int result = dchat_http_exchange(sock, request, req_len, response, resp_size, timeout_ms);
     close(sock);
 
     if (result < 0) {
@@ -604,99 +611,89 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
     }
 
     /* Parse messages from Discross HTML.
-     * Discross renders messages in <table> elements:
-     *   <th>Username</th> ... message content in subsequent <td> elements
-     * The structure is: <table><tr><th rowspan=N>Username</th></tr>
-     *   <tr><td>message text</td></tr>
-     *   ...
-     * </table>
-     *
-     * We look for <th> tags for usernames and nearby content for messages.
+     * Discross uses <div class="message"> blocks:
+     *   <div class="message" ...>
+     *     <div ...>
+     *       <span ...>USERNAME</span>
+     *       <span ...>DATE</span>
+     *     </div>
+     *     <a ...><div class="messagecontent" ...>CONTENT</div></a>
+     *   </div>
      */
     data->message_count = 0;
     const char *pos = body;
-    char current_user[DCHAT_MAX_NAME_LEN] = "";
 
     while (data->message_count < DCHAT_MAX_MESSAGES) {
-        /* Look for either <th (username header) or message content after a username */
-        const char *th_tag = strstr(pos, "<th");
-        const char *td_tag = strstr(pos, "<td");
+        /* Find next message block */
+        const char *msg_div = strstr(pos, "class=\"message\"");
+        if (!msg_div) break;
 
-        /* If we find a <th> before the next <td>, extract username */
-        if (th_tag && (!td_tag || th_tag < td_tag)) {
-            const char *th_close = strchr(th_tag, '>');
-            if (!th_close) break;
-            th_close++;
+        /* Find the first <span> inside this message block for the username */
+        const char *span_tag = strstr(msg_div, "<span");
+        if (!span_tag) break;
+        const char *span_close = strchr(span_tag, '>');
+        if (!span_close) break;
+        span_close++;
 
-            /* Extract username text (between > and </th>) */
-            const char *th_end = strstr(th_close, "</th>");
-            if (!th_end) break;
+        /* Extract username text until </span> */
+        const char *span_end = strstr(span_close, "</span>");
+        if (!span_end) break;
 
-            int len = (int)(th_end - th_close);
-            if (len > 0 && len < DCHAT_MAX_NAME_LEN) {
-                memcpy(current_user, th_close, len);
-                current_user[len] = '\0';
-                strip_html_tags(current_user);
-                html_decode_inplace(current_user);
-                /* Trim whitespace */
-                while (current_user[0] == ' ' || current_user[0] == '\n') {
-                    memmove(current_user, current_user + 1, strlen(current_user));
-                }
-                int ulen = strlen(current_user);
-                while (ulen > 0 && (current_user[ulen - 1] == ' ' || current_user[ulen - 1] == '\n')) {
-                    current_user[--ulen] = '\0';
-                }
-            }
+        dchat_message_t *msg = &data->messages[data->message_count];
+        msg->content[0] = '\0';
 
-            pos = th_end + 5;
-            continue;
+        int ulen = (int)(span_end - span_close);
+        if (ulen > DCHAT_MAX_NAME_LEN - 1) ulen = DCHAT_MAX_NAME_LEN - 1;
+        if (ulen > 0) {
+            memcpy(msg->username, span_close, ulen);
+            msg->username[ulen] = '\0';
+            strip_html_tags(msg->username);
+            html_decode_inplace(msg->username);
+            /* Trim whitespace */
+            char *u = msg->username;
+            while (*u == ' ' || *u == '\n' || *u == '\r') u++;
+            if (u != msg->username) memmove(msg->username, u, strlen(u) + 1);
+            ulen = strlen(msg->username);
+            while (ulen > 0 && (msg->username[ulen - 1] == ' ' || msg->username[ulen - 1] == '\n'))
+                msg->username[--ulen] = '\0';
+        } else {
+            strcpy(msg->username, "???");
         }
 
-        /* Extract message from <td> */
-        if (td_tag) {
-            const char *td_close = strchr(td_tag, '>');
-            if (!td_close) break;
-            td_close++;
+        /* Find messagecontent div for the actual message text */
+        const char *content_div = strstr(span_end, "messagecontent");
+        /* Don't look past the next message block */
+        const char *next_msg = strstr(span_end + 1, "class=\"message\"");
 
-            /* Find end of <td> content */
-            const char *td_end = strstr(td_close, "</td>");
-            if (!td_end) break;
-
-            int len = (int)(td_end - td_close);
-            if (len > 0 && current_user[0] != '\0' && len < DCHAT_MAX_CONTENT_LEN) {
-                dchat_message_t *msg = &data->messages[data->message_count];
-
-                strncpy(msg->username, current_user, DCHAT_MAX_NAME_LEN - 1);
-                msg->username[DCHAT_MAX_NAME_LEN - 1] = '\0';
-
-                /* Copy content, strip HTML tags, decode entities */
-                int copy_len = (len < DCHAT_MAX_CONTENT_LEN - 1) ? len : DCHAT_MAX_CONTENT_LEN - 1;
-                memcpy(msg->content, td_close, copy_len);
-                msg->content[copy_len] = '\0';
-                strip_html_tags(msg->content);
-                html_decode_inplace(msg->content);
-
-                /* Trim whitespace */
-                char *c = msg->content;
-                while (*c == ' ' || *c == '\n' || *c == '\r' || *c == '\t') {
-                    memmove(c, c + 1, strlen(c));
-                }
-                int clen = strlen(msg->content);
-                while (clen > 0 && (msg->content[clen - 1] == ' ' || msg->content[clen - 1] == '\n')) {
-                    msg->content[--clen] = '\0';
-                }
-
-                /* Only count if there's actual content */
-                if (msg->content[0] != '\0') {
-                    data->message_count++;
+        if (content_div && (!next_msg || content_div < next_msg)) {
+            const char *content_start = strchr(content_div, '>');
+            if (content_start) {
+                content_start++;
+                const char *content_end = strstr(content_start, "</div>");
+                if (content_end) {
+                    int clen = (int)(content_end - content_start);
+                    if (clen > DCHAT_MAX_CONTENT_LEN - 1) clen = DCHAT_MAX_CONTENT_LEN - 1;
+                    memcpy(msg->content, content_start, clen);
+                    msg->content[clen] = '\0';
+                    strip_html_tags(msg->content);
+                    html_decode_inplace(msg->content);
+                    /* Trim whitespace */
+                    char *c = msg->content;
+                    while (*c == ' ' || *c == '\n' || *c == '\r' || *c == '\t') c++;
+                    if (c != msg->content) memmove(msg->content, c, strlen(c) + 1);
+                    clen = strlen(msg->content);
+                    while (clen > 0 && (msg->content[clen - 1] == ' ' || msg->content[clen - 1] == '\n'))
+                        msg->content[--clen] = '\0';
                 }
             }
-
-            pos = td_end + 5;
-            continue;
         }
 
-        break;  /* No more <th> or <td> found */
+        /* Only count if there's actual content */
+        if (msg->content[0] != '\0') {
+            data->message_count++;
+        }
+
+        pos = next_msg ? next_msg : (content_div ? content_div + 14 : span_end + 7);
     }
 
     data->messages_valid = true;
