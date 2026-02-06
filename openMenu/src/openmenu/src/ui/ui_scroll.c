@@ -25,6 +25,7 @@
 #include "ui/dc/input.h"
 
 #include "ui/ui_bg.h"
+#include "ui/ui_draw_state_dispatch.h"
 #include "ui/ui_marquee.h"
 #include "ui/ui_scroll.h"
 
@@ -627,83 +628,13 @@ FUNCTION(UI_NAME, setup) {
 
 FUNCTION_INPUT(UI_NAME, handle_input) {
     enum control input_current = button;
-    switch (draw_current) {
-        case DRAW_MENU: {
-            handle_input_menu(input_current);
-        } break;
-        case DRAW_CREDITS: {
-            handle_input_credits(input_current);
-        } break;
-        case DRAW_MULTIDISC: {
-            handle_input_multidisc(input_current);
-        } break;
-        case DRAW_EXIT: {
-            handle_input_exit(input_current);
-        } break;
-        case DRAW_CODEBREAKER: {
-            handle_input_codebreaker(input_current);
-            if (start_cb) {
-                run_cb();
-            }
-        } break;
-        case DRAW_PSX_LAUNCHER: {
-            handle_input_psx_launcher(input_current);
-        } break;
-        case DRAW_SAVELOAD: {
-            handle_input_saveload(input_current);
-        } break;
-        case DRAW_DCNOW_PLAYERS: {
-            handle_input_dcnow(input_current);
-        } break;
-        default:
-        case DRAW_UI: {
-            handle_input_ui(input_current);
-        } break;
-    }
+    DISPATCH_INPUT(draw_current, input_current, run_cb);
     navigate_timeout--;
 }
 
 FUNCTION(UI_NAME, drawOP) {
     ui_bg_draw();
-
-    switch (draw_current) {
-        case DRAW_MENU: {
-            /* Menu on top */
-            draw_menu_op();
-        } break;
-        case DRAW_CREDITS: {
-            /* Credits on top */
-            draw_credits_op();
-        } break;
-        case DRAW_MULTIDISC: {
-            /* Multidisc choice on top */
-            draw_multidisc_op();
-        } break;
-        case DRAW_EXIT: {
-            /* Exit popup on top */
-            draw_exit_op();
-        } break;
-        case DRAW_CODEBREAKER: {
-            /* CodeBreaker popup on top */
-            draw_codebreaker_op();
-        } break;
-        case DRAW_PSX_LAUNCHER: {
-            /* PSX launcher popup on top */
-            draw_psx_launcher_op();
-        } break;
-        case DRAW_SAVELOAD: {
-            /* Save/Load popup on top */
-            draw_saveload_op();
-        } break;
-        case DRAW_DCNOW_PLAYERS: {
-            /* DC Now popup on top */
-            draw_dcnow_op();
-        } break;
-        default:
-        case DRAW_UI: {
-            /* always drawn */
-        } break;
-    }
+    DISPATCH_DRAW_OP(draw_current);
 }
 
 FUNCTION(UI_NAME, drawTR) {
@@ -711,42 +642,5 @@ FUNCTION(UI_NAME, drawTR) {
     draw_gameinfo();
     draw_gameart();
 
-    switch (draw_current) {
-        case DRAW_MENU: {
-            /* Menu on top */
-            draw_menu_tr();
-        } break;
-        case DRAW_CREDITS: {
-            /* Credits on top */
-            draw_credits_tr();
-        } break;
-        case DRAW_MULTIDISC: {
-            /* Multidisc choice on top */
-            draw_multidisc_tr();
-        } break;
-        case DRAW_EXIT: {
-            /* Exit popup on top */
-            draw_exit_tr();
-        } break;
-        case DRAW_CODEBREAKER: {
-            /* CodeBreaker popup on top */
-            draw_codebreaker_tr();
-        } break;
-        case DRAW_PSX_LAUNCHER: {
-            /* PSX launcher popup on top */
-            draw_psx_launcher_tr();
-        } break;
-        case DRAW_SAVELOAD: {
-            /* Save/Load popup on top */
-            draw_saveload_tr();
-        } break;
-        case DRAW_DCNOW_PLAYERS: {
-            /* DC Now popup on top */
-            draw_dcnow_tr();
-        } break;
-        default:
-        case DRAW_UI: {
-            /* always drawn */
-        } break;
-    }
+    DISPATCH_DRAW_TR(draw_current);
 }

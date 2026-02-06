@@ -30,6 +30,7 @@
 #include "ui/theme_manager.h"
 
 #include "ui/ui_bg.h"
+#include "ui/ui_draw_state_dispatch.h"
 #include "ui/ui_marquee.h"
 #include "ui/ui_folders.h"
 
@@ -888,74 +889,11 @@ FUNCTION(UI_NAME, drawTR) {
     draw_clock();
 
     /* Then draw popups on top */
-    switch (draw_current) {
-        case DRAW_MENU: {
-            draw_menu_tr();
-        } break;
-        case DRAW_CREDITS: {
-            draw_credits_tr();
-        } break;
-        case DRAW_MULTIDISC: {
-            draw_multidisc_tr();
-        } break;
-        case DRAW_EXIT: {
-            draw_exit_tr();
-        } break;
-        case DRAW_CODEBREAKER: {
-            draw_codebreaker_tr();
-        } break;
-        case DRAW_PSX_LAUNCHER: {
-            draw_psx_launcher_tr();
-        } break;
-        case DRAW_SAVELOAD: {
-            draw_saveload_tr();
-        } break;
-        case DRAW_DCNOW_PLAYERS: {
-            draw_dcnow_tr();
-        } break;
-        default:
-        case DRAW_UI: {
-            /* Game list and artwork already drawn above */
-        } break;
-    }
+    DISPATCH_DRAW_TR(draw_current);
 }
 
 FUNCTION_INPUT(UI_NAME, handle_input) {
     enum control input_current = button;
-
-    switch (draw_current) {
-        case DRAW_MENU: {
-            handle_input_menu(input_current);
-        } break;
-        case DRAW_CREDITS: {
-            handle_input_credits(input_current);
-        } break;
-        case DRAW_MULTIDISC: {
-            handle_input_multidisc(input_current);
-        } break;
-        case DRAW_EXIT: {
-            handle_input_exit(input_current);
-        } break;
-        case DRAW_CODEBREAKER: {
-            handle_input_codebreaker(input_current);
-            if (start_cb) {
-                run_cb();
-            }
-        } break;
-        case DRAW_PSX_LAUNCHER: {
-            handle_input_psx_launcher(input_current);
-        } break;
-        case DRAW_SAVELOAD: {
-            handle_input_saveload(input_current);
-        } break;
-        case DRAW_DCNOW_PLAYERS: {
-            handle_input_dcnow(input_current);
-        } break;
-        default:
-        case DRAW_UI: {
-            handle_input_ui(input_current);
-        } break;
-    }
-
+    DISPATCH_INPUT(draw_current, input_current, run_cb);
     navigate_timeout--;
 }
