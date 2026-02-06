@@ -4757,6 +4757,8 @@ handle_input_discord_chat(enum control input) {
                            dchat_data.channels[dchat_choice].name);
                     strncpy(dchat_data.current_channel_id,
                             dchat_data.channels[dchat_choice].id, DCHAT_MAX_ID_LEN - 1);
+                    dchat_data.messages_valid = false;  /* Clear old channel's messages */
+                    dchat_data.message_count = 0;
                     dchat_is_loading = true;
                     dchat_needs_fetch = true;
                     dchat_shown_loading = false;
