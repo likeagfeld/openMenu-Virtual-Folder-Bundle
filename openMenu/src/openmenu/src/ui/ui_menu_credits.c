@@ -199,31 +199,47 @@ typedef struct menu_option {
     menu_visible_fn  is_visible;    /* NULL = always visible (Phase 3 populates this) */
 } menu_option_t;
 
-/* Visibility predicates defined in Phase 3 - for now all NULL (always visible) */
+/* Visibility predicates: return 1 if option should be shown */
+static int vis_never(int ui, const int* c) { (void)ui; (void)c; return 0; }
+static int vis_not_scroll_or_folders(int ui, const int* c) { (void)c; return ui != UI_SCROLL && ui != UI_FOLDERS; }
+static int vis_not_folders(int ui, const int* c) { (void)c; return ui != UI_FOLDERS; }
+static int vis_scroll_only(int ui, const int* c) { (void)c; return ui == UI_SCROLL; }
+static int vis_folders_only(int ui, const int* c) { (void)c; return ui == UI_FOLDERS; }
+static int vis_scroll_or_folders(int ui, const int* c) { (void)c; return ui == UI_SCROLL || ui == UI_FOLDERS; }
+static int vis_multidisc_grouping(int ui, const int* c) {
+    return ui == UI_FOLDERS && c[CHOICE_MULTIDISC] != MULTIDISC_SHOW;
+}
+static int vis_vm2(int ui, const int* c) { (void)ui; (void)c; return vm2_device_count > 0; }
+
+/* Single visibility check used by navigation and rendering */
+static inline int option_visible(int idx) {
+    if (!menu_options[idx].is_visible) return 1;
+    return menu_options[idx].is_visible(sf_ui[0], choices);
+}
 
 static menu_option_t menu_options[] = {
     [CHOICE_THEME]              = {"Style",                theme_choice_text,              THEME_CHOICES,  &sf_ui,                  NULL},
     [CHOICE_REGION]             = {"Theme",                region_choice_text,             3,              &sf_region,              NULL},
-    [CHOICE_ASPECT]             = {"Aspect",               aspect_choice_text,             2,              &sf_aspect,              NULL},
-    [CHOICE_BEEP]               = {"Beep",                 beep_choice_text,               2,              &sf_beep,                NULL},
+    [CHOICE_ASPECT]             = {"Aspect",               aspect_choice_text,             2,              &sf_aspect,              vis_not_scroll_or_folders},
+    [CHOICE_BEEP]               = {"Beep",                 beep_choice_text,               2,              &sf_beep,                vis_never},
     [CHOICE_BIOS_3D]            = {"Exit to 3D BIOS",      bios_3d_choice_text,            2,              &sf_bios_3d,             NULL},
     [CHOICE_SORT]               = {"Sort",                 sort_choice_text,               SORT_CHOICES,   &sf_sort,                NULL},
-    [CHOICE_FILTER]             = {"Filter",               filter_choice_text,             FILTER_CHOICES, &sf_filter,              NULL},
+    [CHOICE_FILTER]             = {"Filter",               filter_choice_text,             FILTER_CHOICES, &sf_filter,              vis_not_folders},
     [CHOICE_MULTIDISC]          = {"Multi-Disc",           multidisc_choice_text,          2,              &sf_multidisc,           NULL},
-    [CHOICE_MULTIDISC_GROUPING] = {"Multi-Disc Grouping",  multidisc_grouping_choice_text, 2,              &sf_multidisc_grouping,  NULL},
-    [CHOICE_SCROLL_ART]         = {"Artwork",              scroll_art_choice_text,         2,              &sf_scroll_art,          NULL},
-    [CHOICE_SCROLL_INDEX]       = {"Display Index Numbers", scroll_index_choice_text,      2,              &sf_scroll_index,        NULL},
-    [CHOICE_DISC_DETAILS]       = {"Disc Details",         disc_details_choice_text,       2,              &sf_disc_details,        NULL},
-    [CHOICE_FOLDERS_ART]        = {"Artwork",              folders_art_choice_text,         2,              &sf_folders_art,         NULL},
-    [CHOICE_FOLDERS_ITEM_DETAILS] = {"Item Details",       folders_item_details_choice_text, 2,            &sf_folders_item_details, NULL},
-    [CHOICE_CLOCK]              = {"Clock",                clock_choice_text,              3,              &sf_clock,               NULL},
-    [CHOICE_MARQUEE_SPEED]      = {"Marquee Speed",        marquee_speed_choice_text,      3,              &sf_marquee_speed,       NULL},
-    [CHOICE_VM2_SEND_ALL]       = {"VMU Game ID",          vm2_send_all_choice_text,       3,              &sf_vm2_send_all,        NULL},
+    [CHOICE_MULTIDISC_GROUPING] = {"Multi-Disc Grouping",  multidisc_grouping_choice_text, 2,              &sf_multidisc_grouping,  vis_multidisc_grouping},
+    [CHOICE_SCROLL_ART]         = {"Artwork",              scroll_art_choice_text,         2,              &sf_scroll_art,          vis_scroll_only},
+    [CHOICE_SCROLL_INDEX]       = {"Display Index Numbers", scroll_index_choice_text,      2,              &sf_scroll_index,        vis_scroll_only},
+    [CHOICE_DISC_DETAILS]       = {"Disc Details",         disc_details_choice_text,       2,              &sf_disc_details,        vis_scroll_only},
+    [CHOICE_FOLDERS_ART]        = {"Artwork",              folders_art_choice_text,         2,              &sf_folders_art,         vis_folders_only},
+    [CHOICE_FOLDERS_ITEM_DETAILS] = {"Item Details",       folders_item_details_choice_text, 2,            &sf_folders_item_details, vis_folders_only},
+    [CHOICE_CLOCK]              = {"Clock",                clock_choice_text,              3,              &sf_clock,               vis_folders_only},
+    [CHOICE_MARQUEE_SPEED]      = {"Marquee Speed",        marquee_speed_choice_text,      3,              &sf_marquee_speed,       vis_scroll_or_folders},
+    [CHOICE_VM2_SEND_ALL]       = {"VMU Game ID",          vm2_send_all_choice_text,       3,              &sf_vm2_send_all,        vis_vm2},
     [CHOICE_BOOT_MODE]          = {"Boot Mode",            boot_mode_choice_text,          4,              &sf_boot_mode,           NULL},
     [CHOICE_DCNOW_VMU]          = {"DC NOW! VMU",          dcnow_vmu_choice_text,          2,              &sf_dcnow_vmu,           NULL},
     [CHOICE_SAVE]               = {"Save/Load",            save_choice_text,               2,              NULL,                    NULL},
-    [CHOICE_DCNOW]              = {"DC NOW!",              NULL,                           0,              NULL,                    NULL},
-    [CHOICE_CREDITS]            = {"Credits",              credits_text,                   0,              NULL,                    NULL},
+    [CHOICE_DCNOW]              = {"DC NOW!",              NULL,                           0,              NULL,                    vis_never},
+    [CHOICE_CREDITS]            = {"Credits",              credits_text,                   0,              NULL,                    vis_never},
 };
 
 /* Convenience accessors replacing the old parallel arrays */
@@ -516,80 +532,13 @@ menu_choice_prev(void) {
     if (*input_timeout_ptr > 0) {
         return;
     }
-    current_choice--;
-    /* Wrap around if we go below start */
-    if (current_choice < CHOICE_START) {
-        current_choice = CHOICE_END;
-    }
-    /* Keep skipping until we land on a valid option */
-    int attempts = 0;
-    while (attempts < CHOICE_END - CHOICE_START + 1) {
-        int skip = 0;
-        /* Skip SCROLL_ART option in non-Scroll modes */
-        if (current_choice == CHOICE_SCROLL_ART && sf_ui[0] != UI_SCROLL) {
-            skip = 1;
-        }
-        /* Skip SCROLL_INDEX option in non-Scroll modes */
-        if (current_choice == CHOICE_SCROLL_INDEX && sf_ui[0] != UI_SCROLL) {
-            skip = 1;
-        }
-        /* Skip DISC_DETAILS option in non-Scroll modes */
-        if (current_choice == CHOICE_DISC_DETAILS && sf_ui[0] != UI_SCROLL) {
-            skip = 1;
-        }
-        /* Skip MULTIDISC_GROUPING option in non-Folders modes or when Multi-Disc is "Show All" */
-        if (current_choice == CHOICE_MULTIDISC_GROUPING && (sf_ui[0] != UI_FOLDERS || choices[CHOICE_MULTIDISC] == MULTIDISC_SHOW)) {
-            skip = 1;
-        }
-        /* Skip FOLDERS_ART option in non-Folders modes */
-        if (current_choice == CHOICE_FOLDERS_ART && sf_ui[0] != UI_FOLDERS) {
-            skip = 1;
-        }
-        /* Skip FOLDERS_ITEM_DETAILS option in non-Folders modes */
-        if (current_choice == CHOICE_FOLDERS_ITEM_DETAILS && sf_ui[0] != UI_FOLDERS) {
-            skip = 1;
-        }
-        /* Skip MARQUEE_SPEED option in non-Scroll/Folders modes */
-        if (current_choice == CHOICE_MARQUEE_SPEED && sf_ui[0] != UI_SCROLL && sf_ui[0] != UI_FOLDERS) {
-            skip = 1;
-        }
-        /* Skip CLOCK option in non-Folders modes */
-        if (current_choice == CHOICE_CLOCK && sf_ui[0] != UI_FOLDERS) {
-            skip = 1;
-        }
-        /* Skip VM2_SEND_ALL option when no VM2 devices detected */
-        if (current_choice == CHOICE_VM2_SEND_ALL && vm2_device_count == 0) {
-            skip = 1;
-        }
-        /* Skip Aspect in Scroll mode (not used) */
-        if (current_choice == CHOICE_ASPECT && sf_ui[0] == UI_SCROLL) {
-            skip = 1;
-        }
-        /* Skip Aspect/Filter in Folders mode */
-        if (sf_ui[0] == UI_FOLDERS && (current_choice == CHOICE_ASPECT || current_choice == CHOICE_FILTER)) {
-            skip = 1;
-        }
-        /* Skip BEEP option (disabled/commented out) */
-        if (current_choice == CHOICE_BEEP) {
-            skip = 1;
-        }
-        /* Skip DCNOW in up/down navigation (reached via left/right from Save/Apply) */
-        if (current_choice == CHOICE_DCNOW) {
-            skip = 1;
-        }
-        /* Skip CREDITS in up/down navigation (reached via left/right from Save/Apply) */
-        if (current_choice == CHOICE_CREDITS) {
-            skip = 1;
-        }
-        if (!skip) {
-            break;  /* Found a valid option */
-        }
+    int attempts = CHOICE_END - CHOICE_START + 1;
+    do {
         current_choice--;
         if (current_choice < CHOICE_START) {
             current_choice = CHOICE_END;
         }
-        attempts++;
-    }
+    } while (!option_visible(current_choice) && --attempts > 0);
     *input_timeout_ptr = INPUT_TIMEOUT;
 }
 
@@ -598,80 +547,13 @@ menu_choice_next(void) {
     if (*input_timeout_ptr > 0) {
         return;
     }
-    current_choice++;
-    /* Wrap around if we go past end */
-    if (current_choice > CHOICE_END) {
-        current_choice = CHOICE_START;
-    }
-    /* Keep skipping until we land on a valid option */
-    int attempts = 0;
-    while (attempts < CHOICE_END - CHOICE_START + 1) {
-        int skip = 0;
-        /* Skip SCROLL_ART option in non-Scroll modes */
-        if (current_choice == CHOICE_SCROLL_ART && sf_ui[0] != UI_SCROLL) {
-            skip = 1;
-        }
-        /* Skip SCROLL_INDEX option in non-Scroll modes */
-        if (current_choice == CHOICE_SCROLL_INDEX && sf_ui[0] != UI_SCROLL) {
-            skip = 1;
-        }
-        /* Skip DISC_DETAILS option in non-Scroll modes */
-        if (current_choice == CHOICE_DISC_DETAILS && sf_ui[0] != UI_SCROLL) {
-            skip = 1;
-        }
-        /* Skip MULTIDISC_GROUPING option in non-Folders modes or when Multi-Disc is "Show All" */
-        if (current_choice == CHOICE_MULTIDISC_GROUPING && (sf_ui[0] != UI_FOLDERS || choices[CHOICE_MULTIDISC] == MULTIDISC_SHOW)) {
-            skip = 1;
-        }
-        /* Skip FOLDERS_ART option in non-Folders modes */
-        if (current_choice == CHOICE_FOLDERS_ART && sf_ui[0] != UI_FOLDERS) {
-            skip = 1;
-        }
-        /* Skip FOLDERS_ITEM_DETAILS option in non-Folders modes */
-        if (current_choice == CHOICE_FOLDERS_ITEM_DETAILS && sf_ui[0] != UI_FOLDERS) {
-            skip = 1;
-        }
-        /* Skip MARQUEE_SPEED option in non-Scroll/Folders modes */
-        if (current_choice == CHOICE_MARQUEE_SPEED && sf_ui[0] != UI_SCROLL && sf_ui[0] != UI_FOLDERS) {
-            skip = 1;
-        }
-        /* Skip CLOCK option in non-Folders modes */
-        if (current_choice == CHOICE_CLOCK && sf_ui[0] != UI_FOLDERS) {
-            skip = 1;
-        }
-        /* Skip VM2_SEND_ALL option when no VM2 devices detected */
-        if (current_choice == CHOICE_VM2_SEND_ALL && vm2_device_count == 0) {
-            skip = 1;
-        }
-        /* Skip Aspect in Scroll mode (not used) */
-        if (current_choice == CHOICE_ASPECT && sf_ui[0] == UI_SCROLL) {
-            skip = 1;
-        }
-        /* Skip Aspect/Filter in Folders mode */
-        if (sf_ui[0] == UI_FOLDERS && (current_choice == CHOICE_ASPECT || current_choice == CHOICE_FILTER)) {
-            skip = 1;
-        }
-        /* Skip BEEP option (disabled/commented out) */
-        if (current_choice == CHOICE_BEEP) {
-            skip = 1;
-        }
-        /* Skip DCNOW in up/down navigation (reached via left/right from Save/Apply) */
-        if (current_choice == CHOICE_DCNOW) {
-            skip = 1;
-        }
-        /* Skip CREDITS in up/down navigation (reached via left/right from Save/Apply) */
-        if (current_choice == CHOICE_CREDITS) {
-            skip = 1;
-        }
-        if (!skip) {
-            break;  /* Found a valid option */
-        }
+    int attempts = CHOICE_END - CHOICE_START + 1;
+    do {
         current_choice++;
         if (current_choice > CHOICE_END) {
             current_choice = CHOICE_START;
         }
-        attempts++;
-    }
+    } while (!option_visible(current_choice) && --attempts > 0);
     *input_timeout_ptr = INPUT_TIMEOUT;
 }
 
@@ -1049,22 +931,10 @@ draw_menu_tr(void) {
         /* Menu size and placement */
         const int line_height = 24;
         const int width = 320;
-        /* Calculate visible options for height.
-         * Extra rows after options: Save/Apply/Credits, spacing, GDEMU version, Build version = 4 rows
-         * The +4 in the height formula accounts for these rows */
-        int visible_options = MENU_CHOICES - 1;  /* Hide BEEP */
-        if (sf_ui[0] == UI_SCROLL) {
-            visible_options -= 4;  /* Hide Aspect, FOLDERS_ART, FOLDERS_ITEM_DETAILS, CLOCK, MULTIDISC_GROUPING (5 items, -1 for padding) */
-        } else if (sf_ui[0] == UI_FOLDERS) {
-            visible_options -= 4;  /* Hide Aspect, Filter, SCROLL_ART, SCROLL_INDEX, DISC_DETAILS (5 items, -1 for padding) */
-            /* Dynamically hide MULTIDISC_GROUPING when Multi-Disc is "Show All" */
-            if (choices[CHOICE_MULTIDISC] == MULTIDISC_SHOW) {
-                visible_options -= 1;
-            }
-        }
-        /* Dynamically hide VM2_SEND_ALL when no VM2 devices detected */
-        if (vm2_device_count == 0) {
-            visible_options -= 1;
+        /* Count visible options for popup height calculation */
+        int visible_options = 0;
+        for (int i = 0; i < MENU_CHOICES; i++) {
+            if (option_visible(i)) visible_options++;
         }
         const int height = (visible_options + 4) * line_height + (line_height * 11 / 12);
         const int x = (640 / 2) - (width / 2);
@@ -1085,54 +955,7 @@ draw_menu_tr(void) {
 
         cur_y += line_height / 2;
         for (int i = 0; i < MENU_CHOICES; i++) {
-            /* Skip SCROLL_ART option in non-Scroll modes */
-            if (i == CHOICE_SCROLL_ART && sf_ui[0] != UI_SCROLL) {
-                continue;
-            }
-            /* Skip SCROLL_INDEX option in non-Scroll modes */
-            if (i == CHOICE_SCROLL_INDEX && sf_ui[0] != UI_SCROLL) {
-                continue;
-            }
-            /* Skip DISC_DETAILS option in non-Scroll modes */
-            if (i == CHOICE_DISC_DETAILS && sf_ui[0] != UI_SCROLL) {
-                continue;
-            }
-            /* Skip MULTIDISC_GROUPING option in non-Folders modes or when Multi-Disc is "Show All" */
-            if (i == CHOICE_MULTIDISC_GROUPING && (sf_ui[0] != UI_FOLDERS || choices[CHOICE_MULTIDISC] == MULTIDISC_SHOW)) {
-                continue;
-            }
-            /* Skip FOLDERS_ART option in non-Folders modes */
-            if (i == CHOICE_FOLDERS_ART && sf_ui[0] != UI_FOLDERS) {
-                continue;
-            }
-            /* Skip FOLDERS_ITEM_DETAILS option in non-Folders modes */
-            if (i == CHOICE_FOLDERS_ITEM_DETAILS && sf_ui[0] != UI_FOLDERS) {
-                continue;
-            }
-            /* Skip MARQUEE_SPEED option in non-Scroll/Folders modes */
-            if (i == CHOICE_MARQUEE_SPEED && sf_ui[0] != UI_SCROLL && sf_ui[0] != UI_FOLDERS) {
-                continue;
-            }
-            /* Skip CLOCK option in non-Folders modes */
-            if (i == CHOICE_CLOCK && sf_ui[0] != UI_FOLDERS) {
-                continue;
-            }
-            /* Skip VM2_SEND_ALL option when no VM2 devices detected */
-            if (i == CHOICE_VM2_SEND_ALL && vm2_device_count == 0) {
-                continue;
-            }
-            /* Skip Aspect in Scroll mode (not used) */
-            if (i == CHOICE_ASPECT && sf_ui[0] == UI_SCROLL) {
-                continue;
-            }
-            /* Skip Aspect/Filter in Folders mode */
-            if (sf_ui[0] == UI_FOLDERS && (i == CHOICE_ASPECT || i == CHOICE_FILTER)) {
-                continue;
-            }
-            /* Skip BEEP option (disabled/commented out) */
-            if (i == CHOICE_BEEP) {
-                continue;
-            }
+            if (!option_visible(i)) continue;
             cur_y += line_height;
             if (i == current_choice) {
                 font_bmp_set_color(highlight_color);
@@ -1200,11 +1023,10 @@ draw_menu_tr(void) {
         /* Menu size and placement (many options not shown in LineDesc/Grid3) */
         const int line_height = 32;
         const int width = 400;
-        /* Exclude: BEEP, SCROLL_ART, SCROLL_INDEX, DISC_DETAILS, FOLDERS_ART, FOLDERS_ITEM_DETAILS, MARQUEE_SPEED, CLOCK, MULTIDISC_GROUPING (9 items, -1 for padding) */
-        int visible_options = MENU_CHOICES - 8;
-        /* Dynamically hide VM2_SEND_ALL when no VM2 devices detected */
-        if (vm2_device_count == 0) {
-            visible_options -= 1;
+        /* Count visible options for popup height calculation */
+        int visible_options = 0;
+        for (int i = 0; i < MENU_CHOICES; i++) {
+            if (option_visible(i)) visible_options++;
         }
         const int height = (visible_options + 3) * line_height - line_height / 4 + line_height; /* Add space for version strings */
         const int x = (640 / 2) - (width / 2);
@@ -1224,50 +1046,7 @@ draw_menu_tr(void) {
 
         cur_y += line_height / 4;
         for (int i = 0; i < MENU_CHOICES; i++) {
-            /* Skip SCROLL_ART option in non-Scroll modes */
-            if (i == CHOICE_SCROLL_ART && sf_ui[0] != UI_SCROLL) {
-                continue;
-            }
-            /* Skip SCROLL_INDEX option in non-Scroll modes */
-            if (i == CHOICE_SCROLL_INDEX && sf_ui[0] != UI_SCROLL) {
-                continue;
-            }
-            /* Skip DISC_DETAILS option in non-Scroll modes */
-            if (i == CHOICE_DISC_DETAILS && sf_ui[0] != UI_SCROLL) {
-                continue;
-            }
-            /* Skip FOLDERS_ART option in non-Folders modes */
-            if (i == CHOICE_FOLDERS_ART && sf_ui[0] != UI_FOLDERS) {
-                continue;
-            }
-            /* Skip FOLDERS_ITEM_DETAILS option in non-Folders modes */
-            if (i == CHOICE_FOLDERS_ITEM_DETAILS && sf_ui[0] != UI_FOLDERS) {
-                continue;
-            }
-            /* Skip MARQUEE_SPEED option in non-Scroll/Folders modes */
-            if (i == CHOICE_MARQUEE_SPEED && sf_ui[0] != UI_SCROLL && sf_ui[0] != UI_FOLDERS) {
-                continue;
-            }
-            /* Skip CLOCK option in non-Folders modes */
-            if (i == CHOICE_CLOCK && sf_ui[0] != UI_FOLDERS) {
-                continue;
-            }
-            /* Skip VM2_SEND_ALL option when no VM2 devices detected */
-            if (i == CHOICE_VM2_SEND_ALL && vm2_device_count == 0) {
-                continue;
-            }
-            /* Skip MULTIDISC_GROUPING option in non-Folders modes or when Multi-Disc is "Show All" */
-            if (i == CHOICE_MULTIDISC_GROUPING && (sf_ui[0] != UI_FOLDERS || choices[CHOICE_MULTIDISC] == MULTIDISC_SHOW)) {
-                continue;
-            }
-            /* Skip Aspect/Sort/Filter in Folders mode */
-            if (sf_ui[0] == UI_FOLDERS && (i == CHOICE_ASPECT || i == CHOICE_SORT || i == CHOICE_FILTER)) {
-                continue;
-            }
-            /* Skip BEEP option (disabled/commented out) */
-            if (i == CHOICE_BEEP) {
-                continue;
-            }
+            if (!option_visible(i)) continue;
             cur_y += line_height;
             uint32_t temp_color = text_color;
             if (i == current_choice) {
