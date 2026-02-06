@@ -643,8 +643,10 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
         "\r\n",
         channel_id, data->host, data->port, data->session_id);
 
-    /* Messages page can be large (CSS/JS overhead + messages) - allocate on heap */
-    const int resp_size = 49152;  /* 48KB - Heath123 fork pages have large inline CSS/JS */
+    /* Messages page can be very large due to inline CSS/JS in <head> (~30-40KB)
+     * plus message blocks (~1KB each). Need enough buffer to capture messages
+     * at the bottom of the page (newest). 128KB handles even very active channels. */
+    const int resp_size = 131072;  /* 128KB */
     char *response = (char *)malloc(resp_size);
     if (!response) {
         strcpy(data->error_message, "Out of memory");
