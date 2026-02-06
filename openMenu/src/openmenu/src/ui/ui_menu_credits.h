@@ -51,11 +51,11 @@ void draw_psx_launcher_tr(void);
 void draw_saveload_op(void);
 void draw_saveload_tr(void);
 
-void dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_ptr, uint32_t title_color);
-void handle_input_dcnow(enum control input);
-void draw_dcnow_op(void);
-void draw_dcnow_tr(void);
-void dcnow_background_tick(void);
+/* DC Now menu declarations provided by dcnow_menu.h */
+#include "../dcnow/dcnow_menu.h"
+
+/* draw_popup_menu is used by dcnow_menu.c */
+void draw_popup_menu(int x, int y, int width, int height);
 
 void set_cur_game_item(const gd_item* id);
 const gd_item* get_cur_game_item();
