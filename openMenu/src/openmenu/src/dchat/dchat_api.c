@@ -43,6 +43,16 @@ static char dchat_cached_host[DCHAT_MAX_HOST_LEN];
 static bool dchat_dns_cached = false;
 
 /**
+ * Gracefully close a socket. Sends SHUT_RDWR to signal the remote end,
+ * then closes. This helps KOS's limited TCP stack release the socket
+ * cleanly instead of sending RST, which avoids socket table exhaustion.
+ */
+static void dchat_close_socket(int sock) {
+    shutdown(sock, SHUT_RDWR);
+    close(sock);
+}
+
+/**
  * Open a TCP connection to the Discross server.
  * Caches DNS resolution after first successful lookup.
  * @return socket fd on success, negative on error
@@ -146,6 +156,117 @@ static int dchat_http_exchange(int sock, const char *request, int req_len,
             if (n <= 0) break;
             drained += n;
             drain_start = timer_ms_gettime64();  /* reset on data */
+            thd_pass();
+        }
+        if (drained > 0)
+            printf("Discross: Drained %d extra bytes\n", drained);
+    }
+
+    return total;
+}
+
+/**
+ * Like dchat_http_exchange but skips data until a marker string is found.
+ * This is critical for message pages where the <head> section is 30-40KB
+ * of CSS/JS that would waste our limited buffer. By skipping to <body> or
+ * the first message marker, we use the buffer for actual message content.
+ *
+ * @param skip_to    Marker string to search for (e.g. "<body")
+ * @return total bytes stored in response (starting from marker), negative on error
+ */
+static int dchat_http_exchange_skip(int sock, const char *request, int req_len,
+                                     char *response, int buf_size, uint32_t timeout_ms,
+                                     const char *skip_to) {
+    int sent = send(sock, request, req_len, 0);
+    if (sent <= 0) {
+        printf("Discross: Send failed\n");
+        return -5;
+    }
+
+    uint64_t start = timer_ms_gettime64();
+    int total = 0;
+    bool found_marker = false;
+    int skip_len = (int)strlen(skip_to);
+
+    /* Phase 1: Read and discard until we find the marker string.
+     * Use a small rolling window to detect the marker across chunk boundaries. */
+    char skip_buf[2048];
+    int skip_buf_len = 0;
+    int total_skipped = 0;
+
+    while (!found_marker) {
+        if (timer_ms_gettime64() - start > timeout_ms) {
+            printf("Discross: Timeout before finding marker '%s' (skipped %d bytes)\n",
+                   skip_to, total_skipped);
+            response[0] = '\0';
+            return -6;
+        }
+
+        int n = recv(sock, skip_buf + skip_buf_len, (int)sizeof(skip_buf) - skip_buf_len - 1, 0);
+        if (n > 0) {
+            skip_buf_len += n;
+            skip_buf[skip_buf_len] = '\0';
+            start = timer_ms_gettime64();
+
+            /* Search for marker in the accumulated skip buffer */
+            char *marker = strstr(skip_buf, skip_to);
+            if (marker) {
+                /* Found! Copy everything from the marker into the response buffer */
+                int remaining = skip_buf_len - (int)(marker - skip_buf);
+                if (remaining > buf_size - 1) remaining = buf_size - 1;
+                memcpy(response, marker, remaining);
+                total = remaining;
+                found_marker = true;
+                total_skipped += (int)(marker - skip_buf);
+                printf("Discross: Skipped %d bytes of head, found marker\n", total_skipped);
+            } else {
+                /* Not found yet - keep last (skip_len-1) chars in case marker spans chunks */
+                int keep = skip_len - 1;
+                if (keep > skip_buf_len) keep = skip_buf_len;
+                total_skipped += skip_buf_len - keep;
+                if (keep > 0) memmove(skip_buf, skip_buf + skip_buf_len - keep, keep);
+                skip_buf_len = keep;
+            }
+        } else if (n == 0) {
+            printf("Discross: Connection closed before marker found\n");
+            response[0] = '\0';
+            return -6;
+        } else {
+            printf("Discross: Recv error before marker found\n");
+            response[0] = '\0';
+            return -6;
+        }
+        thd_pass();
+    }
+
+    /* Phase 2: Fill remaining buffer space */
+    while (total < buf_size - 1) {
+        if (timer_ms_gettime64() - start > timeout_ms) break;
+
+        int n = recv(sock, response + total, buf_size - total - 1, 0);
+        if (n > 0) {
+            total += n;
+            start = timer_ms_gettime64();
+        } else if (n == 0) {
+            break;
+        } else {
+            break;
+        }
+        thd_pass();
+    }
+
+    response[total] = '\0';
+
+    /* Drain any remaining data for clean close */
+    if (total >= buf_size - 1) {
+        char drain[1024];
+        uint64_t drain_start = timer_ms_gettime64();
+        int drained = 0;
+        while (timer_ms_gettime64() - drain_start < 3000) {
+            int n = recv(sock, drain, sizeof(drain), 0);
+            if (n <= 0) break;
+            drained += n;
+            drain_start = timer_ms_gettime64();
             thd_pass();
         }
         if (drained > 0)
@@ -381,7 +502,7 @@ int dchat_login(dchat_data_t *data, uint32_t timeout_ms) {
 
     char response[4096];
     int result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
-    close(sock);
+    dchat_close_socket(sock);
 
     if (result < 0) {
         snprintf(data->error_message, sizeof(data->error_message),
@@ -434,7 +555,7 @@ int dchat_fetch_servers(dchat_data_t *data, uint32_t timeout_ms) {
 
     char response[8192];
     int result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
-    close(sock);
+    dchat_close_socket(sock);
 
     if (result < 0) {
         snprintf(data->error_message, sizeof(data->error_message),
@@ -559,11 +680,11 @@ int dchat_fetch_channels(dchat_data_t *data, const char *server_id, uint32_t tim
     char *response = (char *)malloc(16384);
     if (!response) {
         strcpy(data->error_message, "Out of memory");
-        close(sock);
+        dchat_close_socket(sock);
         return -20;
     }
     int result = dchat_http_exchange(sock, request, req_len, response, 16384, timeout_ms);
-    close(sock);
+    dchat_close_socket(sock);
 
     if (result < 0) {
         snprintf(data->error_message, sizeof(data->error_message),
@@ -704,19 +825,30 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
         "\r\n",
         channel_id, data->host, data->port, data->session_id);
 
-    /* Messages page can be very large due to inline CSS/JS in <head> (~30-40KB)
-     * plus message blocks (~1KB each). Need enough buffer to capture messages
-     * at the bottom of the page (newest). 128KB handles even very active channels. */
-    const int resp_size = 131072;  /* 128KB */
+    /* Messages page has a massive <head> section (30-40KB of CSS/JS/fonts)
+     * before any message content. On a 33.6k modem this wastes our buffer
+     * and causes timeouts before reaching the newest messages at the end.
+     *
+     * Solution: Use dchat_http_exchange_skip() to stream through and discard
+     * the <head> section, only buffering from <body onward. This means our
+     * 64KB buffer is used entirely for message HTML, not wasted on CSS/JS.
+     *
+     * Discross returns messages oldest-first (sorted by createdTimestamp),
+     * so the newest messages are at the END of the HTML body. */
+    const int resp_size = 65536;  /* 64KB - enough for ~50+ messages without head */
     char *response = (char *)malloc(resp_size);
     if (!response) {
         strcpy(data->error_message, "Out of memory");
-        close(sock);
+        dchat_close_socket(sock);
         return -20;
     }
 
-    int result = dchat_http_exchange(sock, request, req_len, response, resp_size, timeout_ms);
-    close(sock);
+    /* Skip past the <head> section - search for <body to start buffering.
+     * Use longer timeout (30s) since modem connections are slow. */
+    uint32_t msg_timeout = timeout_ms < 30000 ? 30000 : timeout_ms;
+    int result = dchat_http_exchange_skip(sock, request, req_len,
+                                          response, resp_size, msg_timeout, "<body");
+    dchat_close_socket(sock);
 
     if (result < 0) {
         snprintf(data->error_message, sizeof(data->error_message),
@@ -725,12 +857,10 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
         return result;
     }
 
-    const char *body = dchat_http_body(response);
-    if (!body) {
-        strcpy(data->error_message, "Invalid response");
-        free(response);
-        return -7;
-    }
+    /* Response starts at "<body..." since we skipped past HTTP headers and <head>.
+     * No need to call dchat_http_body() - use response directly. */
+    const char *body = response;
+    printf("Discross: Message response: %d bytes (starting from <body)\n", result);
 
     /* Parse messages from Discross HTML.
      *
@@ -955,7 +1085,7 @@ int dchat_send_message(dchat_data_t *data, const char *channel_id,
 
     char response[2048];
     int result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
-    close(sock);
+    dchat_close_socket(sock);
 
     if (result < 0) {
         snprintf(data->error_message, sizeof(data->error_message),
