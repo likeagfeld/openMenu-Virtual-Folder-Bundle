@@ -478,11 +478,14 @@ menu_accept(void) {
             list_set_genre_sort((FLAGS_GENRE)choices[CHOICE_FILTER] - 1, choices[CHOICE_SORT]);
         }
 
-        if (choices[CHOICE_SAVE] == 0 /* Save */) {
-            savefile_save();
+        if (choices[CHOICE_SAVE] == 0 /* Save/Load */) {
+            /* Show Save/Load popup for VMU device selection */
+            saveload_setup(state_ptr, stored_colors, input_timeout_ptr, menu_title_color);
+        } else {
+            /* Apply mode - just reload UI with new settings, no VMU save */
+            extern void reload_ui(void);
+            reload_ui();
         }
-        extern void reload_ui(void);
-        reload_ui();
     }
     if (current_choice == CHOICE_DCNOW) {
         /* Call dcnow_setup() to initialize the DC Now popup */
@@ -2161,6 +2164,7 @@ void
 saveload_setup(enum draw_state* state, theme_color* _colors, int* timeout_ptr, uint32_t title_color) {
     common_setup(state, _colors, timeout_ptr);
     menu_title_color = title_color;
+    *state = DRAW_SAVELOAD;
 
     /* Save current UI mode for consistent rendering until window closes */
     saveload_original_ui_mode = sf_ui[0];
@@ -2204,7 +2208,7 @@ handle_input_saveload(enum control input) {
                     saveload_close_all(1);  /* Close with UI reload */
                 } else if (saveload_msg_line1 != NULL &&
                            strstr(saveload_msg_line1, "saved") != NULL) {
-                    saveload_close_all(0);  /* Close without reload */
+                    saveload_close_all(1);  /* Close with reload to apply new settings */
                 } else {
                     /* Error - return to browse */
                     saveload_substate = SAVELOAD_BROWSE;
