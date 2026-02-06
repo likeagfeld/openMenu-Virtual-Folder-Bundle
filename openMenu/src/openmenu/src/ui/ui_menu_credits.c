@@ -326,29 +326,16 @@ menu_setup(enum draw_state* state, theme_color* _colors, int* timeout_ptr, uint3
     /* Rescan for VM2 devices (detect hot-swapped devices) */
     vm2_rescan();
 
-    choices[CHOICE_THEME] = sf_ui[0];
-    choices[CHOICE_REGION] = sf_region[0];
-    choices[CHOICE_ASPECT] = sf_aspect[0];
-    choices[CHOICE_SORT] = sf_sort[0];
+    /* Load settings from sf_* globals into choices[] */
+    for (int i = 0; i < MENU_NUM_OPTIONS; i++) {
+        if (menu_options[i].setting) {
+            choices[i] = (*menu_options[i].setting)[0];
+        }
+    }
     /* In Folders mode, clamp Sort to valid range (0-1) */
     if (sf_ui[0] == UI_FOLDERS && choices[CHOICE_SORT] >= SORT_CHOICES_FOLDERS) {
         choices[CHOICE_SORT] = 0;  /* Default to Alphabetical */
     }
-    choices[CHOICE_FILTER] = sf_filter[0];
-    choices[CHOICE_BEEP] = sf_beep[0]; /* Hidden from UI */
-    choices[CHOICE_BIOS_3D] = sf_bios_3d[0];
-    choices[CHOICE_MULTIDISC] = sf_multidisc[0];
-    choices[CHOICE_MULTIDISC_GROUPING] = sf_multidisc_grouping[0];
-    choices[CHOICE_SCROLL_ART] = sf_scroll_art[0];
-    choices[CHOICE_SCROLL_INDEX] = sf_scroll_index[0];
-    choices[CHOICE_DISC_DETAILS] = sf_disc_details[0];
-    choices[CHOICE_FOLDERS_ART] = sf_folders_art[0];
-    choices[CHOICE_FOLDERS_ITEM_DETAILS] = sf_folders_item_details[0];
-    choices[CHOICE_MARQUEE_SPEED] = sf_marquee_speed[0];
-    choices[CHOICE_CLOCK] = sf_clock[0];
-    choices[CHOICE_VM2_SEND_ALL] = sf_vm2_send_all[0];
-    choices[CHOICE_BOOT_MODE] = sf_boot_mode[0];
-    choices[CHOICE_DCNOW_VMU] = sf_dcnow_vmu[0];
 
     if (choices[CHOICE_THEME] != UI_SCROLL && choices[CHOICE_THEME] != UI_FOLDERS) {
         menu_options[CHOICE_REGION].value_labels = region_choice_text;
@@ -457,25 +444,7 @@ menu_accept(void) {
         }
 
         /* Apply: update Global Settings */
-        sf_ui[0] = choices[CHOICE_THEME];
-        sf_region[0] = choices[CHOICE_REGION];
-        sf_aspect[0] = choices[CHOICE_ASPECT];
-        sf_sort[0] = choices[CHOICE_SORT];
-        sf_filter[0] = choices[CHOICE_FILTER];
-        sf_beep[0] = choices[CHOICE_BEEP]; /* Hidden from UI */
-        sf_bios_3d[0] = choices[CHOICE_BIOS_3D];
-        sf_multidisc[0] = choices[CHOICE_MULTIDISC];
-        sf_multidisc_grouping[0] = choices[CHOICE_MULTIDISC_GROUPING];
-        sf_scroll_art[0] = choices[CHOICE_SCROLL_ART];
-        sf_scroll_index[0] = choices[CHOICE_SCROLL_INDEX];
-        sf_disc_details[0] = choices[CHOICE_DISC_DETAILS];
-        sf_folders_art[0] = choices[CHOICE_FOLDERS_ART];
-        sf_folders_item_details[0] = choices[CHOICE_FOLDERS_ITEM_DETAILS];
-        sf_marquee_speed[0] = choices[CHOICE_MARQUEE_SPEED];
-        sf_clock[0] = choices[CHOICE_CLOCK];
-        sf_vm2_send_all[0] = choices[CHOICE_VM2_SEND_ALL];
-        sf_boot_mode[0] = choices[CHOICE_BOOT_MODE];
-        sf_dcnow_vmu[0] = choices[CHOICE_DCNOW_VMU];
+        apply_choices_to_settings();
 
         /* Immediately apply DC Now VMU setting change */
         if (sf_dcnow_vmu[0] == DCNOW_VMU_OFF) {
@@ -486,18 +455,6 @@ menu_accept(void) {
         }
         /* When turned ON, the VMU will be updated next time dcnow_vmu_update_display is called
          * (e.g., when opening DC Now popup or on next data refresh) */
-
-        if (choices[CHOICE_THEME] != UI_SCROLL && choices[CHOICE_THEME] != UI_FOLDERS && sf_region[0] > REGION_END) {
-            sf_custom_theme[0] = THEME_ON;
-            int num_default_themes = 0;
-            theme_get_default(sf_aspect[0], &num_default_themes);
-            sf_custom_theme_num[0] = sf_region[0] - num_default_themes;
-        } else if ((choices[CHOICE_THEME] == UI_SCROLL || choices[CHOICE_THEME] == UI_FOLDERS) && sf_region[0] > 0) {
-            sf_custom_theme[0] = THEME_ON;
-            sf_custom_theme_num[0] = sf_region[0] - 1;
-        } else {
-            sf_custom_theme[0] = THEME_OFF;
-        }
 
         /* If not filtering, then plain sort */
         if (!choices[CHOICE_FILTER]) {
@@ -1778,27 +1735,13 @@ static void saveload_init_state(void) {
     }
 }
 
-/* Apply current menu choices to sf_* settings variables */
-static void saveload_apply_choices_to_settings(void) {
-    sf_ui[0] = choices[CHOICE_THEME];
-    sf_region[0] = choices[CHOICE_REGION];
-    sf_aspect[0] = choices[CHOICE_ASPECT];
-    sf_sort[0] = choices[CHOICE_SORT];
-    sf_filter[0] = choices[CHOICE_FILTER];
-    sf_beep[0] = choices[CHOICE_BEEP];
-    sf_bios_3d[0] = choices[CHOICE_BIOS_3D];
-    sf_multidisc[0] = choices[CHOICE_MULTIDISC];
-    sf_multidisc_grouping[0] = choices[CHOICE_MULTIDISC_GROUPING];
-    sf_scroll_art[0] = choices[CHOICE_SCROLL_ART];
-    sf_scroll_index[0] = choices[CHOICE_SCROLL_INDEX];
-    sf_disc_details[0] = choices[CHOICE_DISC_DETAILS];
-    sf_folders_art[0] = choices[CHOICE_FOLDERS_ART];
-    sf_folders_item_details[0] = choices[CHOICE_FOLDERS_ITEM_DETAILS];
-    sf_marquee_speed[0] = choices[CHOICE_MARQUEE_SPEED];
-    sf_clock[0] = choices[CHOICE_CLOCK];
-    sf_vm2_send_all[0] = choices[CHOICE_VM2_SEND_ALL];
-    sf_boot_mode[0] = choices[CHOICE_BOOT_MODE];
-    sf_dcnow_vmu[0] = choices[CHOICE_DCNOW_VMU];
+/* Apply current menu choices to sf_* settings variables (shared by Apply and Save) */
+static void apply_choices_to_settings(void) {
+    for (int i = 0; i < MENU_NUM_OPTIONS; i++) {
+        if (menu_options[i].setting) {
+            (*menu_options[i].setting)[0] = (uint8_t)choices[i];
+        }
+    }
 
     /* Handle custom theme encoding */
     if (choices[CHOICE_THEME] != UI_SCROLL && choices[CHOICE_THEME] != UI_FOLDERS && sf_region[0] > REGION_END) {
@@ -1827,7 +1770,7 @@ static void saveload_do_save(void) {
     saveload_msg_line2 = NULL;
 
     /* Apply current menu choices to settings */
-    saveload_apply_choices_to_settings();
+    apply_choices_to_settings();
 
     /* Perform save */
     int8_t result = savefile_save_to_device(slot->device_id);
