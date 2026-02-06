@@ -25,6 +25,7 @@
 #include "ui/dc/input.h"
 
 #include "ui/ui_bg.h"
+#include "ui/ui_marquee.h"
 #include "ui/ui_scroll.h"
 
 #define UNUSED __attribute__((unused))
@@ -135,34 +136,9 @@ static int list_len;
 static uint8_t cusor_alpha = 255;
 static char cusor_step = -5;
 
-/* Marquee scrolling state */
+/* Marquee scrolling - uses shared marquee_ctx */
 #define MARQUEE_DISPLAY_WIDTH 49
-#define MARQUEE_INITIAL_PAUSE_FRAMES 60
-#define MARQUEE_END_PAUSE_FRAMES 90
-
-typedef enum {
-    MARQUEE_STATE_INITIAL_PAUSE,
-    MARQUEE_STATE_SCROLL_LEFT,
-    MARQUEE_STATE_END_PAUSE,
-    MARQUEE_STATE_SCROLL_RIGHT
-} marquee_state_t;
-
-static marquee_state_t marquee_state = MARQUEE_STATE_INITIAL_PAUSE;
-static int marquee_offset = 0;
-static int marquee_timer = 0;
-static int marquee_max_offset = 0;
-static int marquee_last_selected = -1;
-
-static inline int
-get_marquee_speed_frames(void) {
-    extern uint8_t* sf_marquee_speed;
-    switch (sf_marquee_speed[0]) {
-        case 0: return 8;  /* Slow */
-        case 1: return 6;  /* Medium */
-        case 2: return 4;  /* Fast */
-        default: return 6; /* Default to Medium */
-    }
-}
+static marquee_ctx marquee;
 
 /*static theme_color gdemu_colors = {
     .text_color = color_main_default,
@@ -191,63 +167,7 @@ static bool direction_current = false;
 #define direction_held (direction_last & direction_current)
 
 /* draw_bg_layers removed - now uses shared ui_bg_draw() */
-
-static void
-marquee_reset(void) {
-    marquee_state = MARQUEE_STATE_INITIAL_PAUSE;
-    marquee_offset = 0;
-    marquee_timer = MARQUEE_INITIAL_PAUSE_FRAMES;
-    marquee_max_offset = 0;
-}
-
-static void
-marquee_update_animation(int name_length) {
-    int max_offset = name_length - MARQUEE_DISPLAY_WIDTH;
-    if (max_offset < 0) {
-        max_offset = 0;
-    }
-
-    marquee_max_offset = max_offset;
-
-    if (marquee_timer > 0) {
-        marquee_timer--;
-        return;
-    }
-
-    switch (marquee_state) {
-        case MARQUEE_STATE_INITIAL_PAUSE:
-            marquee_state = MARQUEE_STATE_SCROLL_LEFT;
-            marquee_timer = get_marquee_speed_frames();
-            break;
-
-        case MARQUEE_STATE_SCROLL_LEFT:
-            marquee_offset++;
-            if (marquee_offset >= marquee_max_offset) {
-                marquee_offset = marquee_max_offset;
-                marquee_state = MARQUEE_STATE_END_PAUSE;
-                marquee_timer = MARQUEE_END_PAUSE_FRAMES;
-            } else {
-                marquee_timer = get_marquee_speed_frames();
-            }
-            break;
-
-        case MARQUEE_STATE_END_PAUSE:
-            marquee_state = MARQUEE_STATE_SCROLL_RIGHT;
-            marquee_timer = get_marquee_speed_frames();
-            break;
-
-        case MARQUEE_STATE_SCROLL_RIGHT:
-            marquee_offset--;
-            if (marquee_offset <= 0) {
-                marquee_offset = 0;
-                marquee_state = MARQUEE_STATE_INITIAL_PAUSE;
-                marquee_timer = MARQUEE_INITIAL_PAUSE_FRAMES;
-            } else {
-                marquee_timer = get_marquee_speed_frames();
-            }
-            break;
-    }
-}
+/* marquee_reset/marquee_update_animation removed - now uses shared marquee_ctx */
 
 static void
 draw_gamelist(void) {
@@ -278,10 +198,7 @@ draw_gamelist(void) {
         }
         if ((current_starting_index + i) == current_selected_item) {
             /* Check if selection changed */
-            if (current_selected_item != marquee_last_selected) {
-                marquee_reset();
-                marquee_last_selected = current_selected_item;
-            }
+            marquee_check_selection(&marquee, current_selected_item);
 
             /* grab the disc number and if there is more than one */
             int disc_set = gd_item_disc_total(list_current[current_selected_item]->disc);
@@ -313,14 +230,14 @@ draw_gamelist(void) {
             /* Handle marquee for long names */
             int name_len = strlen(buffer);
             if (name_len > MARQUEE_DISPLAY_WIDTH) {
-                marquee_update_animation(name_len);
+                marquee_update(&marquee, name_len);
                 /* Show only 49-char window */
-                char saved_char = buffer[marquee_offset + MARQUEE_DISPLAY_WIDTH];
-                buffer[marquee_offset + MARQUEE_DISPLAY_WIDTH] = '\0';
+                char saved_char = buffer[marquee.offset + MARQUEE_DISPLAY_WIDTH];
+                buffer[marquee.offset + MARQUEE_DISPLAY_WIDTH] = '\0';
                 font_bmp_draw_main(cur_theme->pos_gameslist_x + X_ADJUST_TEXT,
                                    cur_theme->pos_gameslist_y + Y_ADJUST_TEXT + (i * 21),
-                                   &buffer[marquee_offset]);
-                buffer[marquee_offset + MARQUEE_DISPLAY_WIDTH] = saved_char;
+                                   &buffer[marquee.offset]);
+                buffer[marquee.offset + MARQUEE_DISPLAY_WIDTH] = saved_char;
             } else {
                 font_bmp_draw_main(cur_theme->pos_gameslist_x + X_ADJUST_TEXT,
                                    cur_theme->pos_gameslist_y + Y_ADJUST_TEXT + (i * 21),
@@ -705,8 +622,7 @@ FUNCTION(UI_NAME, setup) {
     draw_current = DRAW_UI;
 
     /* Initialize marquee state */
-    marquee_reset();
-    marquee_last_selected = -1;
+    marquee_init(&marquee, MARQUEE_DISPLAY_WIDTH);
 }
 
 FUNCTION_INPUT(UI_NAME, handle_input) {
