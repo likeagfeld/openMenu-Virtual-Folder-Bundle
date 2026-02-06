@@ -2945,97 +2945,34 @@ static uint64_t dcnow_last_fetch_ms = 0;
 /* Scratch buffer for auto-refresh so old data survives a failed fetch */
 static dcnow_data_t dcnow_temp_data;
 
+static bool dcnow_is_connecting = false;
+static int dcnow_connect_anim_frame = 0;
+
+extern void (*current_ui_draw_OP)(void);
+extern void (*current_ui_draw_TR)(void);
+
 #define DCNOW_INPUT_TIMEOUT_INITIAL (10)
 #define DCNOW_INPUT_TIMEOUT_REPEAT (4)
 #define DCNOW_AUTO_REFRESH_MS       60000  /* 60 seconds between auto-refreshes */
 
-/* Visual callback for network connection status - renders full scene with stunning visuals */
 static void dcnow_connection_status_callback(const char* message) {
-    /* Render a single frame with the status message */
+    strncpy(connection_status, message, sizeof(connection_status) - 1);
+    connection_status[sizeof(connection_status) - 1] = '\0';
+
     pvr_wait_ready();
     pvr_scene_begin();
 
-    /* Opaque pass - draw dark background  */
     draw_set_list(PVR_LIST_OP_POLY);
     pvr_list_begin(PVR_LIST_OP_POLY);
-
-    /* Full screen dark background with gradient effect */
-    draw_draw_quad(0, 0, 640, 480, 0xFF1A1A2E);
-
+    (*current_ui_draw_OP)();
     pvr_list_finish();
 
-    /* Transparent pass - draw status box and text */
     draw_set_list(PVR_LIST_TR_POLY);
     pvr_list_begin(PVR_LIST_TR_POLY);
-
-    /* Stunning multi-layer border effect */
-    const int border_width = 6;
-    const int box_x = 120;
-    const int box_y = 180;
-    const int box_width = 400;
-    const int box_height = 120;
-
-    /* Outer glow - cyan */
-    draw_draw_quad(box_x - border_width - 2, box_y - border_width - 2,
-                   box_width + (2 * (border_width + 2)), box_height + (2 * (border_width + 2)),
-                   0x4000DDFF);
-
-    /* Main border - bright cyan gradient effect */
-    draw_draw_quad(box_x - border_width, box_y - border_width,
-                   box_width + (2 * border_width), box_height + (2 * border_width),
-                   0xFF00DDFF);
-
-    /* Inner border accent - electric blue */
-    draw_draw_quad(box_x - (border_width / 2), box_y - (border_width / 2),
-                   box_width + border_width, box_height + border_width,
-                   0xFF0099FF);
-
-    /* Deep blue-black background with slight transparency for depth */
-    draw_draw_quad(box_x, box_y, box_width, box_height, 0xF0001133);
-
-    /* Draw text with color coding based on message content */
-    font_bmp_begin_draw();
-
-    /* Title in bright cyan */
-    font_bmp_set_color(0xFF00DDFF);
-    font_bmp_draw_main(240, 200, "Dreamcast NOW!");
-
-    /* Determine message color based on content */
-    uint32_t msg_color = 0xFFFFFFFF;  /* Default: white */
-    if (strstr(message, "Initializing") || strstr(message, "Setting")) {
-        msg_color = 0xFF00AAFF;  /* Blue for initialization */
-    } else if (strstr(message, "Dialing") || strstr(message, "Connecting")) {
-        msg_color = 0xFFFFAA00;  /* Orange for active connection */
-    } else if (strstr(message, "Connected") || strstr(message, "ready")) {
-        msg_color = 0xFF00FF66;  /* Green for success */
-    } else if (strstr(message, "failed") || strstr(message, "Failed")) {
-        msg_color = 0xFFFF3333;  /* Red for errors */
-    }
-
-    font_bmp_set_color(msg_color);
-    /* Center the message horizontally */
-    int msg_len = strlen(message);
-    int msg_x = 320 - (msg_len * 8 / 2);
-    font_bmp_draw_main(msg_x, 235, message);
-
-    /* Progress indicator dots for active states */
-    if (strstr(message, "Dialing") || strstr(message, "Connecting") ||
-        strstr(message, "Initializing") || strstr(message, "Setting")) {
-        font_bmp_set_color(0xFF00DDFF);
-        static int dot_count = 0;
-        dot_count = (dot_count + 1) % 4;
-        char dots[5] = "";
-        for (int i = 0; i < dot_count; i++) {
-            strcat(dots, ".");
-        }
-        font_bmp_draw_main(320, 260, dots);
-    }
-
+    (*current_ui_draw_TR)();
     pvr_list_finish();
-    pvr_scene_finish();
 
-    /* Hold frame so it's visible */
-    thd_sleep(600);
+    pvr_scene_finish();
 }
 
 void
@@ -3089,35 +3026,6 @@ dcnow_setup(enum draw_state* state, struct theme_color* _colors, int* timeout_pt
     }
 }
 
-/* Helper to render a connection status frame before blocking operation */
-static void render_connection_frame(const char* message) {
-    pvr_wait_ready();
-    pvr_scene_begin();
-
-    draw_set_list(PVR_LIST_OP_POLY);
-    pvr_list_begin(PVR_LIST_OP_POLY);
-    pvr_list_finish();
-
-    draw_set_list(PVR_LIST_TR_POLY);
-    pvr_list_begin(PVR_LIST_TR_POLY);
-
-    /* White border */
-    const int border_width = 2;
-    draw_draw_quad(160 - border_width, 200 - border_width,
-                   320 + (2 * border_width), 80 + (2 * border_width),
-                   0xFFFFFFFF);
-
-    /* Black background */
-    draw_draw_quad(160, 200, 320, 80, 0xFF000000);
-
-    /* Message */
-    font_bmf_begin_draw();
-    font_bmf_draw_centered(320, 230, 0xFFFFFFFF, message);
-
-    pvr_list_finish();
-    pvr_scene_finish();
-}
-
 void
 handle_input_dcnow(enum control input) {
     /* Check navigate timeout to prevent input skipping */
@@ -3136,10 +3044,17 @@ handle_input_dcnow(enum control input) {
             } else if (dcnow_view == DCNOW_VIEW_CONNECTION_SELECT) {
                 /* User selected a connection method - connect now */
                 printf("DC Now: Starting connection with method %d...\n", dcnow_conn_choice);
+                dcnow_is_connecting = true;
+                dcnow_connect_anim_frame = 0;
+                connection_status[0] = '\0';
+                dcnow_view = DCNOW_VIEW_GAMES;  /* switch to games view so popup shows status */
+
                 dcnow_set_status_callback(dcnow_connection_status_callback);
                 int net_result = dcnow_net_init_with_method(
                     dcnow_conn_choice == 0 ? DCNOW_CONN_SERIAL : DCNOW_CONN_MODEM);
                 dcnow_set_status_callback(NULL);
+                dcnow_is_connecting = false;
+                connection_status[0] = '\0';
 
                 if (net_result < 0) {
                     printf("DC Now: Connection failed: %d\n", net_result);
@@ -3147,7 +3062,6 @@ handle_input_dcnow(enum control input) {
                     snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
                             "Connection failed (error %d). Press A to retry", net_result);
                     dcnow_data.data_valid = false;
-                    dcnow_view = DCNOW_VIEW_GAMES;  /* Back to main view to show error */
                 } else {
                     printf("DC Now: Connection successful\n");
                     dcnow_net_initialized = true;
@@ -3155,7 +3069,6 @@ handle_input_dcnow(enum control input) {
                     snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
                             "Connected! Press X to fetch data");
                     dcnow_data.data_valid = false;
-                    dcnow_view = DCNOW_VIEW_GAMES;
                 }
                 if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
             } else if (!dcnow_data.data_valid) {
@@ -3487,7 +3400,15 @@ draw_dcnow_tr(void) {
 
         cur_y += title_gap;
 
-        if (dcnow_is_loading) {
+        if (dcnow_is_connecting) {
+            font_bmp_set_color(0xFFFFAA00);  /* Orange */
+            if (connection_status[0] != '\0') {
+                font_bmp_draw_main(x_item, cur_y, connection_status);
+            } else {
+                font_bmp_draw_main(x_item, cur_y, "Connecting...");
+            }
+            cur_y += line_height;
+        } else if (dcnow_is_loading) {
             /* Show loading message */
             font_bmp_set_color(text_color);
             font_bmp_draw_main(x_item, cur_y, "Refreshing... Please Wait");
@@ -3877,7 +3798,14 @@ draw_dcnow_tr(void) {
         }
         cur_y += title_gap;
 
-        if (dcnow_is_loading) {
+        if (dcnow_is_connecting) {
+            if (connection_status[0] != '\0') {
+                font_bmf_draw(x_item, cur_y, 0xFFFFAA00, connection_status);
+            } else {
+                font_bmf_draw(x_item, cur_y, 0xFFFFAA00, "Connecting...");
+            }
+            cur_y += line_height;
+        } else if (dcnow_is_loading) {
             cur_y += line_height;
             font_bmf_draw(x_item, cur_y, text_color, "Refreshing... Please Wait");
             dcnow_shown_loading = true;  /* Mark that we've shown the loading screen */
