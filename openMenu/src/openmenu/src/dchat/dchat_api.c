@@ -362,7 +362,7 @@ int dchat_fetch_servers(dchat_data_t *data, uint32_t timeout_ms) {
         /* Find server link: href="./ followed by a numeric ID */
         const char *href = strstr(pos, "href=\"./");
         if (!href) break;
-        href += 7;  /* skip href="./ */
+        href += 8;  /* skip href="./ (8 chars: h,r,e,f,=,",.,/) */
 
         /* Extract server ID (digits only) */
         char id_buf[DCHAT_MAX_ID_LEN];
