@@ -34,8 +34,17 @@
  * ======================================================================== */
 
 #ifdef _arch_dreamcast
+
+/* Cached DNS resolution to avoid repeated lookups over slow modem link.
+ * gethostbyname() sends a UDP packet each time - on a 33.6k modem this
+ * can easily fail if the link is busy with TCP data from a previous request. */
+static struct in_addr dchat_cached_addr;
+static char dchat_cached_host[DCHAT_MAX_HOST_LEN];
+static bool dchat_dns_cached = false;
+
 /**
  * Open a TCP connection to the Discross server.
+ * Caches DNS resolution after first successful lookup.
  * @return socket fd on success, negative on error
  */
 static int dchat_connect(const char *host, int port) {
@@ -49,26 +58,37 @@ static int dchat_connect(const char *host, int port) {
         sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     }
     if (sock < 0) {
-        printf("Discross: Socket failed\n");
+        printf("Discross: Socket creation failed\n");
         return -2;
-    }
-
-    struct hostent *he = gethostbyname(host);
-    if (!he) {
-        printf("Discross: DNS lookup failed for %s\n", host);
-        close(sock);
-        return -3;
     }
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons((uint16_t)port);
-    memcpy(&addr.sin_addr, he->h_addr, he->h_length);
+
+    /* Use cached DNS if available and host hasn't changed */
+    if (dchat_dns_cached && strcmp(host, dchat_cached_host) == 0) {
+        memcpy(&addr.sin_addr, &dchat_cached_addr, sizeof(addr.sin_addr));
+    } else {
+        struct hostent *he = gethostbyname(host);
+        if (!he) {
+            printf("Discross: DNS lookup failed for %s\n", host);
+            close(sock);
+            return -3;
+        }
+        memcpy(&addr.sin_addr, he->h_addr, he->h_length);
+        /* Cache the result */
+        memcpy(&dchat_cached_addr, he->h_addr, he->h_length);
+        strncpy(dchat_cached_host, host, DCHAT_MAX_HOST_LEN - 1);
+        dchat_cached_host[DCHAT_MAX_HOST_LEN - 1] = '\0';
+        dchat_dns_cached = true;
+        printf("Discross: DNS resolved %s, cached\n", host);
+    }
 
     printf("Discross: Connecting to %s:%d...\n", host, port);
     if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        printf("Discross: Connect failed\n");
+        printf("Discross: TCP connect failed\n");
         close(sock);
         return -4;
     }
@@ -78,7 +98,10 @@ static int dchat_connect(const char *host, int port) {
 
 /**
  * Send a full HTTP request and receive the response.
- * @return total bytes received on success, negative on error
+ * If the response is larger than the buffer, drains remaining data
+ * before returning to ensure clean TCP close (avoids RST on close
+ * which can cause socket exhaustion on KOS).
+ * @return total bytes stored in response on success, negative on error
  */
 static int dchat_http_exchange(int sock, const char *request, int req_len,
                                 char *response, int buf_size, uint32_t timeout_ms) {
@@ -90,6 +113,7 @@ static int dchat_http_exchange(int sock, const char *request, int req_len,
 
     uint64_t start = timer_ms_gettime64();
     int total = 0;
+    bool buffer_full = false;
 
     while (total < buf_size - 1) {
         if (timer_ms_gettime64() - start > timeout_ms) break;
@@ -108,6 +132,26 @@ static int dchat_http_exchange(int sock, const char *request, int req_len,
     }
 
     response[total] = '\0';
+    buffer_full = (total >= buf_size - 1);
+
+    /* If buffer filled up, the server may still be sending data.
+     * Drain remaining data to allow clean TCP close instead of RST.
+     * This prevents socket table exhaustion on KOS's limited TCP stack. */
+    if (buffer_full) {
+        char drain[1024];
+        uint64_t drain_start = timer_ms_gettime64();
+        int drained = 0;
+        while (timer_ms_gettime64() - drain_start < 3000) {  /* 3s drain timeout */
+            int n = recv(sock, drain, sizeof(drain), 0);
+            if (n <= 0) break;
+            drained += n;
+            drain_start = timer_ms_gettime64();  /* reset on data */
+            thd_pass();
+        }
+        if (drained > 0)
+            printf("Discross: Drained %d extra bytes\n", drained);
+    }
+
     return total;
 }
 
@@ -579,8 +623,13 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
 #ifdef _arch_dreamcast
     int sock = dchat_connect(data->host, data->port);
     if (sock < 0) {
+        const char *reason = "unknown";
+        if (sock == -1) reason = "no network";
+        else if (sock == -2) reason = "socket create";
+        else if (sock == -3) reason = "DNS lookup";
+        else if (sock == -4) reason = "TCP connect";
         snprintf(data->error_message, sizeof(data->error_message),
-                "Connection failed");
+                "Connection failed: %s", reason);
         return sock;
     }
 
@@ -832,4 +881,7 @@ void dchat_shutdown(dchat_data_t *data) {
         memset(data->session_id, 0, sizeof(data->session_id));
         data->logged_in = false;
     }
+#ifdef _arch_dreamcast
+    dchat_dns_cached = false;
+#endif
 }

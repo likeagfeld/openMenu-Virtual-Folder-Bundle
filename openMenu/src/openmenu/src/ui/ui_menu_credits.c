@@ -4948,9 +4948,10 @@ draw_discord_chat_tr(void) {
             case DCHAT_FETCH_MESSAGES:
                 printf("Discross: Fetching messages for channel %s...\n", dchat_data.current_channel_id);
                 result = dchat_fetch_messages(&dchat_data, dchat_data.current_channel_id, 5000);
+                /* Always update timestamp to prevent rapid retry loops on failure */
+                dchat_last_fetch_ms = timer_ms_gettime64();
                 if (result == 0) {
                     printf("Discross: Got %d messages\n", dchat_data.message_count);
-                    dchat_last_fetch_ms = timer_ms_gettime64();
                     /* Auto-scroll to newest message */
                     if (dchat_data.message_count > 8) {
                         dchat_scroll_offset = dchat_data.message_count - 8;
@@ -4967,17 +4968,18 @@ draw_discord_chat_tr(void) {
     }
 #endif
 
-    /* --- Auto-refresh messages while viewing --- */
+    /* --- Auto-refresh messages while viewing (uses deferred fetch pattern) --- */
 #ifdef _arch_dreamcast
-    if (dchat_data.messages_valid && !dchat_is_loading && dchat_last_fetch_ms > 0 &&
-        dchat_view == DCHAT_VIEW_MESSAGES) {
+    if (dchat_data.messages_valid && !dchat_is_loading && !dchat_needs_fetch &&
+        dchat_last_fetch_ms > 0 && dchat_view == DCHAT_VIEW_MESSAGES) {
         uint64_t now = timer_ms_gettime64();
         if ((now - dchat_last_fetch_ms) >= DCHAT_AUTO_REFRESH_MS) {
-            int result = dchat_fetch_messages(&dchat_data, dchat_data.current_channel_id, 5000);
-            if (result == 0) {
-                printf("Discross: Auto-refresh got %d messages\n", dchat_data.message_count);
-            }
-            dchat_last_fetch_ms = timer_ms_gettime64();
+            printf("Discross: Auto-refresh triggered\n");
+            dchat_is_loading = true;
+            dchat_needs_fetch = true;
+            dchat_shown_loading = false;
+            dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
+            /* Don't clear messages_valid - keep showing old messages while loading */
         }
     }
 #endif
