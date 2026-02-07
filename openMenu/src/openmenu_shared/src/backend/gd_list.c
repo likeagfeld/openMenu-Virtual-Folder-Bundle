@@ -798,9 +798,11 @@ folder_cmp(const void* a, const void* b) {
      * - SORT_DEFAULT (0) = Alphabetical (old default behavior)
      * - SORT_NAME (1) = SD Card Order
      * Sort by slot order when Sort = Name, otherwise alphabetically */
+#ifdef _arch_dreamcast
     if (sf_sort[0] == SORT_NAME) {
         return (*item_a)->slot_num - (*item_b)->slot_num;
     }
+#endif
 
     return strcasecmp((*item_a)->name, (*item_b)->name);
 }

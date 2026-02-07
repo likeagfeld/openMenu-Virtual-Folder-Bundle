@@ -40,6 +40,12 @@ set(OPENMENU_SOURCES
 
 add_executable(openmenu ${OPENMENU_SOURCES})
 
+set(DISCROSS_SOURCES ${OPENMENU_SOURCES})
+list(REMOVE_ITEM DISCROSS_SOURCES src/main.c)
+list(APPEND DISCROSS_SOURCES src/discross_main.c)
+
+add_executable(discross ${DISCROSS_SOURCES})
+
 # Pass version string and feature flags as compile definitions
 target_compile_definitions(openmenu PRIVATE
     OPENMENU_BUILD_VERSION="${OPENMENU_VERSION}"
@@ -47,12 +53,31 @@ target_compile_definitions(openmenu PRIVATE
     # Real network implementation is enabled by default on Dreamcast (_arch_dreamcast)
 )
 
+target_compile_definitions(discross PRIVATE
+    OPENMENU_BUILD_VERSION="${OPENMENU_VERSION}"
+)
+
 target_include_directories(openmenu
         PRIVATE
         src
 )
 
+target_include_directories(discross
+        PRIVATE
+        src
+)
+
 target_link_libraries(openmenu
+        PRIVATE
+        crayon_savefile
+        easing
+        ini
+        openmenu_settings
+        openmenu_shared
+        uthash
+)
+
+target_link_libraries(discross
         PRIVATE
         crayon_savefile
         easing
@@ -76,6 +101,7 @@ if(CMAKE_CROSSCOMPILING)
         if(PPP_LIBRARY)
             message(STATUS "Found PPP library: ${PPP_LIBRARY}")
             target_link_libraries(openmenu PRIVATE ${PPP_LIBRARY})
+            target_link_libraries(discross PRIVATE ${PPP_LIBRARY})
         else()
             message(FATAL_ERROR "PPP library not found! Build libppp first: cd $ENV{KOS_BASE}/addons/libppp && make")
         endif()
@@ -103,8 +129,10 @@ endif ()
 
 if (CMAKE_RUNTIME_OUTPUT_DIRECTORY)
     set(OPENMENU_BIN_OUTPUT ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/1ST_READ.BIN)
+    set(DISCROSS_BIN_OUTPUT ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/discross/1ST_READ.BIN)
 else ()
     set(OPENMENU_BIN_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/1ST_READ.BIN)
+    set(DISCROSS_BIN_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/discross/1ST_READ.BIN)
 endif ()
 
 add_custom_target(openmenu_bin ALL
@@ -119,5 +147,22 @@ add_custom_target(openmenu_bin ALL
         BYPRODUCTS
         ${OPENMENU_BIN_OUTPUT}
         COMMENT "Converting openmenu.elf to 1ST_READ.BIN"
+        VERBATIM
+)
+
+add_custom_target(discross_bin ALL
+        COMMAND
+        ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/discross
+        COMMAND
+        ${KOS_OBJCOPY}
+        -R .stack
+        -O binary
+        $<TARGET_FILE:discross>
+        ${DISCROSS_BIN_OUTPUT}
+        DEPENDS
+        discross
+        BYPRODUCTS
+        ${DISCROSS_BIN_OUTPUT}
+        COMMENT "Converting discross.elf to 1ST_READ.BIN"
         VERBATIM
 )

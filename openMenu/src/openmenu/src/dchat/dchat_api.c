@@ -72,6 +72,9 @@ static int dchat_connect(const char *host, int port) {
         return -2;
     }
 
+    int opt = 1;
+    setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof(opt));
+
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -107,6 +110,22 @@ static int dchat_connect(const char *host, int port) {
 }
 
 /**
+ * Send the entire buffer, retrying until all bytes are sent or error.
+ * @return 0 on success, negative on error
+ */
+static int dchat_send_all(int sock, const char *buffer, int length) {
+    int sent_total = 0;
+    while (sent_total < length) {
+        int sent = send(sock, buffer + sent_total, length - sent_total, 0);
+        if (sent <= 0) {
+            return -5;
+        }
+        sent_total += sent;
+    }
+    return 0;
+}
+
+/**
  * Send a full HTTP request and receive the response.
  * If the response is larger than the buffer, drains remaining data
  * before returning to ensure clean TCP close (avoids RST on close
@@ -115,8 +134,7 @@ static int dchat_connect(const char *host, int port) {
  */
 static int dchat_http_exchange(int sock, const char *request, int req_len,
                                 char *response, int buf_size, uint32_t timeout_ms) {
-    int sent = send(sock, request, req_len, 0);
-    if (sent <= 0) {
+    if (dchat_send_all(sock, request, req_len) < 0) {
         printf("Discross: Send failed\n");
         return -5;
     }
@@ -177,8 +195,7 @@ static int dchat_http_exchange(int sock, const char *request, int req_len,
 static int dchat_http_exchange_skip(int sock, const char *request, int req_len,
                                      char *response, int buf_size, uint32_t timeout_ms,
                                      const char *skip_to) {
-    int sent = send(sock, request, req_len, 0);
-    if (sent <= 0) {
+    if (dchat_send_all(sock, request, req_len) < 0) {
         printf("Discross: Send failed\n");
         return -5;
     }
@@ -288,6 +305,24 @@ static int dchat_http_status(const char *response) {
 }
 
 /**
+ * Check if a response redirects to the login page.
+ */
+static bool dchat_redirects_to_login(const char *response) {
+    return strstr(response, "\r\nLocation: /login") != NULL
+        || strstr(response, "\nLocation: /login") != NULL;
+}
+
+/**
+ * Detect if an HTML body looks like the login page.
+ */
+static bool dchat_body_looks_like_login(const char *body) {
+    if (!body) return false;
+    return strstr(body, "action=\"/login\"") != NULL
+        || strstr(body, "name=\"password\"") != NULL
+        || strstr(body, "id=\"login\"") != NULL;
+}
+
+/**
  * Find the body in an HTTP response (after \r\n\r\n).
  */
 static const char *dchat_http_body(const char *response) {
@@ -372,6 +407,29 @@ static void strip_html_tags(char *str) {
 }
 
 /**
+ * Extract alt text from an <img> tag. Returns true if found.
+ */
+static bool dchat_extract_img_alt(const char *tag_start, char *out, size_t out_len) {
+    const char *alt = strstr(tag_start, "alt=");
+    if (!alt) return false;
+    alt += 4;
+    char quote = (*alt == '"' || *alt == '\'') ? *alt++ : '\0';
+    const char *end = alt;
+    if (quote) {
+        while (*end && *end != quote && *end != '>') end++;
+    } else {
+        while (*end && *end != ' ' && *end != '>') end++;
+    }
+    if (end <= alt) return false;
+    size_t len = (size_t)(end - alt);
+    if (len >= out_len) len = out_len - 1;
+    memcpy(out, alt, len);
+    out[len] = '\0';
+    html_decode_inplace(out);
+    return out[0] != '\0';
+}
+
+/**
  * Strip HTML tags from message content with special handling for media.
  * <img ...> becomes "[img]", <br> variants become spaces,
  * all other tags are removed. Works in-place.
@@ -381,10 +439,19 @@ static void strip_html_tags_content(char *str) {
     while (*r) {
         if (*r == '<') {
             if (strncmp(r + 1, "img", 3) == 0 && (r[4] == ' ' || r[4] == '/' || r[4] == '>')) {
-                /* <img ...> -> [img] (5 chars, always <= tag length) */
+                char alt_buf[64];
+                bool has_alt = dchat_extract_img_alt(r, alt_buf, sizeof(alt_buf));
+                /* <img ...> -> alt text (emoji), fallback to [img] */
                 while (*r && *r != '>') r++;
                 if (*r) r++;
-                memcpy(w, "[img]", 5); w += 5;
+                if (has_alt) {
+                    size_t alt_len = strlen(alt_buf);
+                    memcpy(w, alt_buf, alt_len);
+                    w += alt_len;
+                } else {
+                    memcpy(w, "[img]", 5);
+                    w += 5;
+                }
                 continue;
             }
             if (strncmp(r + 1, "br", 2) == 0 && (r[3] == ' ' || r[3] == '/' || r[3] == '>')) {
@@ -564,14 +631,14 @@ int dchat_fetch_servers(dchat_data_t *data, uint32_t timeout_ms) {
     }
 
     int status = dchat_http_status(response);
-    if (status == 303 || status == 302) {
+    const char *body = dchat_http_body(response);
+    if (status == 303 || status == 302 || dchat_redirects_to_login(response) ||
+        dchat_body_looks_like_login(body)) {
         snprintf(data->error_message, sizeof(data->error_message),
                 "Session expired - re-login needed");
         data->logged_in = false;
         return -10;
     }
-
-    const char *body = dchat_http_body(response);
     if (!body) {
         strcpy(data->error_message, "Invalid response");
         return -7;
@@ -694,6 +761,13 @@ int dchat_fetch_channels(dchat_data_t *data, const char *server_id, uint32_t tim
     }
 
     const char *body = dchat_http_body(response);
+    if (dchat_redirects_to_login(response) || dchat_body_looks_like_login(body)) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Session expired - re-login needed");
+        data->logged_in = false;
+        free(response);
+        return -10;
+    }
     if (!body) {
         strcpy(data->error_message, "Invalid response");
         free(response);
@@ -861,6 +935,13 @@ int dchat_fetch_messages(dchat_data_t *data, const char *channel_id, uint32_t ti
      * No need to call dchat_http_body() - use response directly. */
     const char *body = response;
     printf("Discross: Message response: %d bytes (starting from <body)\n", result);
+    if (dchat_body_looks_like_login(body)) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Session expired - re-login needed");
+        data->logged_in = false;
+        free(response);
+        return -10;
+    }
 
     /* Parse messages from Discross HTML.
      *
@@ -1126,6 +1207,15 @@ int dchat_send_message(dchat_data_t *data, const char *channel_id,
     if (!data || !data->logged_in || !channel_id || !message || message[0] == '\0') return -1;
 
 #ifdef _arch_dreamcast
+    /* URL-encode the message */
+    char enc_msg[512];
+    url_encode(message, enc_msg, sizeof(enc_msg));
+
+    /* Discross uses GET /send?message=...&channel=..., but some relays expect POST. */
+    char response[2048];
+    int status = -1;
+    int result = -1;
+
     int sock = dchat_connect(data->host, data->port);
     if (sock < 0) {
         snprintf(data->error_message, sizeof(data->error_message),
@@ -1133,11 +1223,6 @@ int dchat_send_message(dchat_data_t *data, const char *channel_id,
         return sock;
     }
 
-    /* URL-encode the message */
-    char enc_msg[512];
-    url_encode(message, enc_msg, sizeof(enc_msg));
-
-    /* Discross uses GET /send?message=...&channel=... */
     char request[1024];
     int req_len = snprintf(request, sizeof(request),
         "GET /send?message=%s&channel=%s HTTP/1.1\r\n"
@@ -1148,8 +1233,7 @@ int dchat_send_message(dchat_data_t *data, const char *channel_id,
         "\r\n",
         enc_msg, channel_id, data->host, data->port, data->session_id);
 
-    char response[2048];
-    int result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
+    result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
     dchat_close_socket(sock);
 
     if (result < 0) {
@@ -1159,8 +1243,61 @@ int dchat_send_message(dchat_data_t *data, const char *channel_id,
     }
 
     /* Discross returns 302 redirect on success */
-    int status = dchat_http_status(response);
+    status = dchat_http_status(response);
     if (status == 302 || status == 303 || status == 200) {
+        if (dchat_redirects_to_login(response) ||
+            dchat_body_looks_like_login(dchat_http_body(response))) {
+            data->logged_in = false;
+            snprintf(data->error_message, sizeof(data->error_message),
+                    "Session expired - re-login needed");
+            return -10;
+        }
+        printf("Discross: Message sent OK (HTTP %d)\n", status);
+        return 0;
+    }
+
+    /* Fallback to POST /send for relays that reject GET. */
+    char post_body[600];
+    snprintf(post_body, sizeof(post_body), "message=%s&channel=%s", enc_msg, channel_id);
+    int body_len = strlen(post_body);
+
+    sock = dchat_connect(data->host, data->port);
+    if (sock < 0) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Connection failed");
+        return sock;
+    }
+
+    req_len = snprintf(request, sizeof(request),
+        "POST /send HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Cookie: sessionID=%s\r\n"
+        "Content-Type: application/x-www-form-urlencoded\r\n"
+        "Content-Length: %d\r\n"
+        "User-Agent: openMenu-Dreamcast/1.2-discross\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "%s",
+        data->host, data->port, data->session_id, body_len, post_body);
+
+    result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
+    dchat_close_socket(sock);
+
+    if (result < 0) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Send failed (%d)", result);
+        return result;
+    }
+
+    status = dchat_http_status(response);
+    if (status == 302 || status == 303 || status == 200) {
+        if (dchat_redirects_to_login(response) ||
+            dchat_body_looks_like_login(dchat_http_body(response))) {
+            data->logged_in = false;
+            snprintf(data->error_message, sizeof(data->error_message),
+                    "Session expired - re-login needed");
+            return -10;
+        }
         printf("Discross: Message sent OK (HTTP %d)\n", status);
         return 0;
     }
@@ -1171,6 +1308,51 @@ int dchat_send_message(dchat_data_t *data, const char *channel_id,
 
 #else
     printf("Discross: [STUB] Would send to %s: %s\n", channel_id, message);
+    return 0;
+#endif
+}
+
+int dchat_keepalive(dchat_data_t *data, uint32_t timeout_ms) {
+    if (!data || !data->logged_in) return -1;
+
+#ifdef _arch_dreamcast
+    int sock = dchat_connect(data->host, data->port);
+    if (sock < 0) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Connection failed");
+        return sock;
+    }
+
+    char request[512];
+    int req_len = snprintf(request, sizeof(request),
+        "HEAD /server/ HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Cookie: sessionID=%s\r\n"
+        "User-Agent: openMenu-Dreamcast/1.2-discross\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        data->host, data->port, data->session_id);
+
+    char response[512];
+    int result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
+    dchat_close_socket(sock);
+
+    if (result < 0) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Keepalive failed (%d)", result);
+        return result;
+    }
+
+    int status = dchat_http_status(response);
+    if ((status == 302 || status == 303) && dchat_redirects_to_login(response)) {
+        data->logged_in = false;
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Session expired - re-login needed");
+        return -10;
+    }
+
+    return 0;
+#else
     return 0;
 #endif
 }

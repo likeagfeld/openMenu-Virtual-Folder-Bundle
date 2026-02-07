@@ -1,0 +1,61 @@
+name: Build Discross CDI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["**"]
+  push:
+    branches: ["**"]
+
+jobs:
+  build-discross-cdi:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pull openMenu dev container
+        run: |
+          echo "Pulling pre-built Docker image..."
+          docker pull sbstnc/openmenu-dev:0.2.2
+
+      - name: Build Discross CDI in container
+        run: |
+          docker run --rm \
+            --user root \
+            -v "$PWD":/workspace \
+            -w /workspace \
+            sbstnc/openmenu-dev:0.2.2 \
+            /bin/bash -c "
+              set -euo pipefail
+              apt-get update
+              apt-get install -y genisoimage cdi4dc
+              source /opt/toolchains/dc/kos/environ.sh
+              /workspace/openMenu/tools/build_discross_cdi.sh /workspace/openMenu/build-discross
+            "
+
+      - name: Verify CDI output
+        run: |
+          if [ ! -f "openMenu/build-discross/discross_cdi/discross.cdi" ]; then
+            echo "ERROR: discross.cdi not found!"
+            exit 1
+          fi
+          ls -lh openMenu/build-discross/discross_cdi/discross.cdi
+
+      - name: Upload CDI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: discross-dreamcast-cdi
+          path: |
+            openMenu/build-discross/discross_cdi/discross.cdi
+            openMenu/build-discross/discross_cdi/discross.iso
+            openMenu/build-discross/discross_cdi/1ST_READ.BIN
+            openMenu/build-discross/discross_cdi/IP.BIN
+          if-no-files-found: error
+          retention-days: 30

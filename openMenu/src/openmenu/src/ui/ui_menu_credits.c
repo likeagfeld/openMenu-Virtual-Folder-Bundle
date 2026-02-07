@@ -4270,8 +4270,10 @@ static char dchat_cred_pass[SF_DISCROSS_CRED_LEN];
 
 /* Auto-refresh interval (30 seconds for chat) */
 #define DCHAT_AUTO_REFRESH_MS   30000
+#define DCHAT_KEEPALIVE_MS      120000
 #define DCHAT_INPUT_TIMEOUT_INITIAL (10)
 static uint64_t dchat_last_fetch_ms = 0;
+static uint64_t dchat_last_keepalive_ms = 0;
 
 /* ---- On-screen keyboard for controller-only users ---- */
 #define OSK_COLS 10
@@ -5200,6 +5202,7 @@ draw_discord_chat_tr(void) {
             dchat_shown_loading = false;
             dchat_pending_fetch = DCHAT_FETCH_SERVERS;
             dchat_view = DCHAT_VIEW_SERVERS;
+            dchat_last_keepalive_ms = timer_ms_gettime64();
         } else {
             printf("Discross: Login failed: %d\n", result);
             dchat_is_loading = false;
@@ -5222,6 +5225,7 @@ draw_discord_chat_tr(void) {
                     dchat_view = DCHAT_VIEW_SERVERS;
                     dchat_choice = 0;
                     dchat_scroll_offset = 0;
+                    dchat_last_keepalive_ms = timer_ms_gettime64();
                 }
                 break;
             case DCHAT_FETCH_CHANNELS:
@@ -5232,6 +5236,7 @@ draw_discord_chat_tr(void) {
                     dchat_view = DCHAT_VIEW_CHANNELS;
                     dchat_choice = 0;
                     dchat_scroll_offset = 0;
+                    dchat_last_keepalive_ms = timer_ms_gettime64();
                 }
                 break;
             case DCHAT_FETCH_MESSAGES:
@@ -5246,6 +5251,7 @@ draw_discord_chat_tr(void) {
                         dchat_scroll_offset = dchat_data.message_count - 8;
                         dchat_choice = dchat_data.message_count - 1;
                     }
+                    dchat_last_keepalive_ms = dchat_last_fetch_ms;
                 }
                 break;
             default:
@@ -5269,6 +5275,21 @@ draw_discord_chat_tr(void) {
             dchat_shown_loading = false;
             dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
             /* Don't clear messages_valid - keep showing old messages while loading */
+        }
+    }
+#endif
+
+    /* --- Keepalive to prevent PPP idle timeouts --- */
+#ifdef _arch_dreamcast
+    if (dchat_data.logged_in && !dchat_is_loading && !dchat_needs_fetch) {
+        uint64_t now = timer_ms_gettime64();
+        if (dchat_last_keepalive_ms == 0) {
+            dchat_last_keepalive_ms = now;
+        } else if ((now - dchat_last_keepalive_ms) >= DCHAT_KEEPALIVE_MS) {
+            int ka_result = dchat_keepalive(&dchat_data, 3000);
+            if (ka_result == 0) {
+                dchat_last_keepalive_ms = now;
+            }
         }
     }
 #endif

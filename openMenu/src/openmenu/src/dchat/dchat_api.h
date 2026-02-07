@@ -176,6 +176,15 @@ int dchat_send_message(dchat_data_t *data, const char *channel_id,
                        const char *message, uint32_t timeout_ms);
 
 /**
+ * Send a lightweight request to keep the session/PPP link alive.
+ *
+ * @param data       Session data (must be logged in)
+ * @param timeout_ms Network timeout
+ * @return 0 on success, negative on error
+ */
+int dchat_keepalive(dchat_data_t *data, uint32_t timeout_ms);
+
+/**
  * Check if network is available for Discross.
  * @return true if a network device is active
  */
