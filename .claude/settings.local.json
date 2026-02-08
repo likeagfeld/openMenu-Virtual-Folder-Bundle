@@ -12,7 +12,10 @@
       "Bash(git add:*)",
       "Bash(/usr/bin/git -C /Users/r11/Projects/openMenu-ui-simplify add openMenu/src/openmenu/src/ui/ui_bg.h openMenu/src/openmenu/src/ui/ui_bg.c openMenu/src/openmenu/src/ui/ui_grid.c openMenu/src/openmenu/src/ui/ui_scroll.c openMenu/src/openmenu/src/ui/ui_folders.c openMenu/src/openmenu/src/ui/ui_line_desc.c openMenu/src/openmenu/CMakeLists.txt)",
       "Bash(/usr/bin/git:*)",
-      "Bash(./build_openmenu_macos.sh:*)"
+      "Bash(./build_openmenu_macos.sh:*)",
+      "Bash(git -C /Users/r11/Projects/openMenu-ui-simplify diff main..ui-simplify -- openMenu/src/openmenu/src/ui/ui_menu_credits.c)",
+      "Bash(git -C /Users/r11/Projects/openMenu-ui-simplify log --oneline --all -20 -- openMenu/src/openmenu/src/ui/ui_menu_credits.c)",
+      "Bash(git -C /Users/r11/Projects/openMenu-ui-simplify show main:openMenu/src/openmenu/src/ui/ui_menu_credits.c)"
     ]
   }
 }

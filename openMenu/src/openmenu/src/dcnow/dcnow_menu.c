@@ -279,12 +279,17 @@ handle_input_dcnow(enum control input) {
                             "Connection failed (error %d). Press A to retry", net_result);
                     dcnow_data.data_valid = false;
                 } else {
-                    printf("DC Now: Connection successful\n");
+                    printf("DC Now: Connection successful, starting fetch\n");
                     dcnow_net_initialized = true;
                     memset(&dcnow_data, 0, sizeof(dcnow_data));
-                    snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
-                            "Connected! Press X to fetch data");
                     dcnow_data.data_valid = false;
+
+                    /* Auto-start data fetch */
+                    dcnow_data_fetched = false;
+                    dcnow_is_loading = true;
+                    dcnow_choice = 0;
+                    dcnow_scroll_offset = 0;
+                    dcnow_needs_fetch = true;
                 }
 #endif
                 if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
@@ -711,7 +716,8 @@ draw_dcnow_tr(void) {
         } else if (dcnow_is_loading) {
             /* Show loading message */
             font_bmp_set_color(dcnow_text_color);
-            font_bmp_draw_main(x_item, cur_y, "Refreshing... Please Wait");
+            font_bmp_draw_main(x_item, cur_y,
+                dcnow_last_fetch_ms == 0 ? "Fetching initial data..." : "Refreshing... Please Wait");
             dcnow_shown_loading = true;  /* Mark that we've shown the loading screen */
             cur_y += line_height;
         } else if (dcnow_data.data_valid) {
@@ -1107,7 +1113,8 @@ draw_dcnow_tr(void) {
             cur_y += line_height;
         } else if (dcnow_is_loading) {
             cur_y += line_height;
-            font_bmf_draw(x_item, cur_y, dcnow_text_color, "Refreshing... Please Wait");
+            font_bmf_draw(x_item, cur_y, dcnow_text_color,
+                dcnow_last_fetch_ms == 0 ? "Fetching initial data..." : "Refreshing... Please Wait");
             dcnow_shown_loading = true;  /* Mark that we've shown the loading screen */
         } else if (dcnow_data.data_valid) {
             if (dcnow_view == DCNOW_VIEW_PLAYERS && dcnow_selected_game >= 0) {
