@@ -31,7 +31,7 @@ Note: The data is automatically cached after the first fetch to reduce network c
 
 SPECIAL THANKS TO KAZADE FOR THEIR AMAZING DREAMCAST NOW! IMPLEMENTATION FOR WHICH THIS WOULD NOT BE POSSIBLE WITHOUT ;)
 
-
+Additional thanks to Julian for their support in feature development and QA
 
 
 
