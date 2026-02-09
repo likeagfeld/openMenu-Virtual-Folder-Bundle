@@ -5137,7 +5137,7 @@ static int dchat_draw_btn_hint(int x, int y, char btn, const char *label) {
 
 /* Draw a blurple separator line */
 static void dchat_draw_separator(int x, int y, int width) {
-    draw_draw_quad(x, y, width, 1, 0xFF7289DA);
+    draw_draw_quad(x, y, width, 1, 0xFF5B8CFF);
 }
 
 void
@@ -5327,8 +5327,15 @@ draw_discord_chat_tr(void) {
     /* --- Drawing --- */
     const int line_height = 20;
     const int title_gap = line_height;
-    const int padding = 16;
+    const int padding = 20;
     const int max_visible = 8;
+    const uint32_t accent_primary = 0xFF5B8CFF;
+    const uint32_t accent_secondary = 0xFF7BD1FF;
+    const uint32_t surface_bg = 0xFF121620;
+    const uint32_t surface_card = 0xFF1A2232;
+    const uint32_t surface_card_active = 0xFF26334A;
+    const uint32_t text_primary = 0xFFF2F6FF;
+    const uint32_t text_muted = 0xFF9AA7C4;
 
     /* Calculate popup dimensions based on current view */
     int max_line_len = 42;
@@ -5374,20 +5381,20 @@ draw_discord_chat_tr(void) {
     const int x_item = x + (padding / 2);
 
     /* Draw popup background */
-    draw_popup_menu(x, y, width, height);
+    draw_draw_quad(x, y, width, height, surface_bg);
 
     /* Blurple accent border */
     const int ao = 3;
-    draw_draw_quad(x - ao, y - ao, width + (2 * ao), 2, 0xFF7289DA);
-    draw_draw_quad(x - ao, y + height + ao - 2, width + (2 * ao), 2, 0xFF7289DA);
-    draw_draw_quad(x - ao, y - ao, 2, height + (2 * ao), 0xFF7289DA);
-    draw_draw_quad(x + width + ao - 2, y - ao, 2, height + (2 * ao), 0xFF7289DA);
+    draw_draw_quad(x - ao, y - ao, width + (2 * ao), 2, accent_primary);
+    draw_draw_quad(x - ao, y + height + ao - 2, width + (2 * ao), 2, accent_primary);
+    draw_draw_quad(x - ao, y - ao, 2, height + (2 * ao), accent_primary);
+    draw_draw_quad(x + width + ao - 2, y - ao, 2, height + (2 * ao), accent_primary);
 
     /* Dreamcast button color corner accents */
-    draw_draw_quad(x - 6, y - 6, 8, 8, 0xFFDD2222);          /* Top-left - RED (A) */
-    draw_draw_quad(x + width - 2, y - 6, 8, 8, 0xFF3399FF);  /* Top-right - BLUE (B) */
-    draw_draw_quad(x - 6, y + height - 2, 8, 8, 0xFF00DD00); /* Bottom-left - GREEN (Y) */
-    draw_draw_quad(x + width - 2, y + height - 2, 8, 8, 0xFFFFCC00); /* Bottom-right - YELLOW (X) */
+    draw_draw_quad(x - 6, y - 6, 8, 8, accent_primary);
+    draw_draw_quad(x + width - 2, y - 6, 8, 8, accent_secondary);
+    draw_draw_quad(x - 6, y + height - 2, 8, 8, accent_secondary);
+    draw_draw_quad(x + width - 2, y + height - 2, 8, 8, accent_primary);
 
     int cur_y = y + 2;
     font_bmp_begin_draw();
@@ -5406,7 +5413,7 @@ draw_discord_chat_tr(void) {
         default:                    title = "Discross - Chat"; break;
     }
     int title_x = x + (width / 2) - ((strlen(title) * 8) / 2);
-    font_bmp_set_color(0xFF7289DA);
+    font_bmp_set_color(accent_primary);
     font_bmp_draw_main(title_x, cur_y, title);
     cur_y += line_height;
     /* Title underline */
@@ -5417,7 +5424,7 @@ draw_discord_chat_tr(void) {
     if (dchat_view == DCHAT_VIEW_CONNECT) {
         if (dchat_is_loading) {
             /* Show connecting status with full status log */
-            font_bmp_set_color(0xFFFFCC00);
+            font_bmp_set_color(accent_secondary);
             const char *conn_method = dchat_conn_choice == 0 ? "Serial" : "Modem";
             char connecting_msg[80];
             snprintf(connecting_msg, sizeof(connecting_msg), "Connecting via %s...", conn_method);
@@ -5426,7 +5433,7 @@ draw_discord_chat_tr(void) {
 
             /* Show all status log messages (sequential dialing steps) */
             for (int i = 0; i < dchat_status_log_count && i < DCHAT_STATUS_LOG_LINES; i++) {
-                font_bmp_set_color((i == dchat_status_log_count - 1) ? 0xFFFFCC00 : 0xFF888888);
+                font_bmp_set_color((i == dchat_status_log_count - 1) ? accent_secondary : text_muted);
                 font_bmp_draw_main(x_item + 8, cur_y, dchat_status_log[i]);
                 cur_y += line_height;
             }
@@ -5687,15 +5694,15 @@ draw_discord_chat_tr(void) {
 
     /* ---- COMPOSE VIEW ---- */
     } else if (dchat_view == DCHAT_VIEW_COMPOSE) {
-        font_bmp_set_color(0xFF88CCFF);
+        font_bmp_set_color(text_muted);
         font_bmp_draw_main(x_item, cur_y, "Type your message:");
         cur_y += line_height;
 
         /* Text input box with word wrapping */
         int box_lines = 3;
         int box_h = line_height * box_lines + 4;
-        draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, box_h, 0xFF1A1A2E);
-        draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, 2, 0xFF7289DA);
+        draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, box_h, surface_card);
+        draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, 2, accent_primary);
 
         /* Calculate characters per line and wrap text */
         int chars_per_line = (width - padding) / 8;
@@ -5710,7 +5717,7 @@ draw_discord_chat_tr(void) {
         int start_line = 0;
         if (total_lines > box_lines) start_line = total_lines - box_lines;
 
-        font_bmp_set_color(0xFFFFFFFF);
+        font_bmp_set_color(text_primary);
         for (int ln = start_line; ln < total_lines && ln < start_line + box_lines; ln++) {
             int ln_start = ln * chars_per_line;
             int ln_len = total_len - ln_start;
@@ -5728,7 +5735,7 @@ draw_discord_chat_tr(void) {
 
         char count_buf[32];
         snprintf(count_buf, sizeof(count_buf), "%d/%d", dchat_input_pos, DCHAT_INPUT_BUF_LEN - 1);
-        font_bmp_set_color(0xFF888888);
+        font_bmp_set_color(text_muted);
         font_bmp_draw_main(x_item, cur_y, count_buf);
         cur_y += line_height + 4;
 
@@ -5736,7 +5743,7 @@ draw_discord_chat_tr(void) {
         cur_y += 6;
 
         if (dchat_sending) {
-            font_bmp_set_color(0xFFFFCC00);
+            font_bmp_set_color(accent_secondary);
             font_bmp_draw_main(x_item, cur_y, "Sending...");
         } else {
             int hx = x_item;
@@ -5751,19 +5758,19 @@ draw_discord_chat_tr(void) {
     /* ---- MESSAGES VIEW ---- */
     } else if (dchat_view == DCHAT_VIEW_MESSAGES) {
         if (dchat_is_loading) {
-            font_bmp_set_color(text_color);
+            font_bmp_set_color(text_primary);
             font_bmp_draw_main(x_item, cur_y, "Loading messages...");
             dchat_shown_loading = true;
             cur_y += line_height;
         } else if (dchat_data.messages_valid) {
             char channel_info[64];
             snprintf(channel_info, sizeof(channel_info), "%d messages", dchat_data.message_count);
-            font_bmp_set_color(0xFF88CCFF);
+            font_bmp_set_color(text_muted);
             font_bmp_draw_main(x_item, cur_y, channel_info);
             cur_y += line_height + 4;
 
             if (dchat_data.message_count == 0) {
-                font_bmp_set_color(text_color);
+                font_bmp_set_color(text_primary);
                 font_bmp_draw_main(x_item, cur_y, "No messages in channel");
                 cur_y += line_height;
             } else {
@@ -5778,12 +5785,14 @@ draw_discord_chat_tr(void) {
                     bool selected = (msg_idx == dchat_choice);
                     if (selected) selected_msg = msg;
 
-                    font_bmp_set_color(selected ? 0xFFFF8800 : 0xFF7289DA);
                     int uname_width = strlen(msg->username) * 8;
-                    font_bmp_draw_main(x_item, cur_y, msg->username);
+                    int card_w = width - padding;
+                    int card_h = line_height + 8;
+                    draw_draw_quad(x_item - 6, cur_y - 4, card_w + 12, card_h,
+                                   selected ? surface_card_active : surface_card);
 
-                    font_bmp_set_color(0xFF666666);
-                    font_bmp_draw_main(x_item + uname_width, cur_y, ": ");
+                    font_bmp_set_color(selected ? accent_secondary : text_muted);
+                    font_bmp_draw_main(x_item, cur_y, msg->username);
 
                     int content_max_chars = (width - padding - uname_width - 16) / 8;
                     char content_display[80];
@@ -5796,16 +5805,16 @@ draw_discord_chat_tr(void) {
                         content_display[sizeof(content_display) - 1] = '\0';
                     }
 
-                    font_bmp_set_color(selected ? 0xFFFFCC00 : text_color);
-                    font_bmp_draw_main(x_item + uname_width + 16, cur_y, content_display);
-                    cur_y += line_height;
+                    font_bmp_set_color(selected ? text_primary : text_primary);
+                    font_bmp_draw_main(x_item + uname_width + 12, cur_y, content_display);
+                    cur_y += line_height + 8;
                 }
 
                 if (dchat_data.message_count > max_visible) {
                     char scroll_info[32];
                     snprintf(scroll_info, sizeof(scroll_info), "(%d/%d)",
                              dchat_choice + 1, dchat_data.message_count);
-                    font_bmp_set_color(0xFFBBBBBB);
+                    font_bmp_set_color(text_muted);
                     font_bmp_draw_main(x_item, cur_y, scroll_info);
                     cur_y += line_height;
                 }
@@ -5814,8 +5823,8 @@ draw_discord_chat_tr(void) {
                     cur_y += 2;
                     int box_lines = 3;
                     int box_h = line_height * box_lines + 4;
-                    draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, box_h, 0xFF1A1A2E);
-                    draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, 2, 0xFF7289DA);
+                    draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, box_h, surface_card);
+                    draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, 2, accent_primary);
 
                     int chars_per_line = (width - padding) / 8;
                     if (chars_per_line < 10) chars_per_line = 10;
@@ -5825,7 +5834,7 @@ draw_discord_chat_tr(void) {
                     int start_line = 0;
                     if (total_lines > box_lines) start_line = total_lines - box_lines;
 
-                    font_bmp_set_color(0xFFFFFFFF);
+                    font_bmp_set_color(text_primary);
                     for (int ln = start_line; ln < total_lines && ln < start_line + box_lines; ln++) {
                         int ln_start = ln * chars_per_line;
                         int ln_len = total_len - ln_start;
