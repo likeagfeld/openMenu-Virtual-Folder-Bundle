@@ -1211,83 +1211,54 @@ int dchat_send_message(dchat_data_t *data, const char *channel_id,
     char enc_channel[DCHAT_MAX_ID_LEN * 3];
     url_encode(channel_id, enc_channel, sizeof(enc_channel));
 
-    const char *methods[] = {"POST", "GET"};
-    const int method_count = 2;
+    int sock = dchat_connect(data->host, data->port);
+    if (sock < 0) {
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Connection failed");
+        return sock;
+    }
 
-    int last_status = -1;
-    for (int attempt = 0; attempt < method_count; attempt++) {
-        const char *method = methods[attempt];
-        int sock = dchat_connect(data->host, data->port);
-        if (sock < 0) {
-            snprintf(data->error_message, sizeof(data->error_message),
-                    "Connection failed");
-            return sock;
-        }
+    /* Discross uses GET /send?message=...&channel=... */
+    char request[1024];
+    int req_len = snprintf(request, sizeof(request),
+        "GET /send?message=%s&channel=%s HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Cookie: sessionID=%s\r\n"
+        "Referer: /channels/%s\r\n"
+        "User-Agent: openMenu-Dreamcast/1.2-discross\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        enc_msg, enc_channel, data->host, data->port, data->session_id, enc_channel);
 
-        char request[1024];
-        int req_len = 0;
-        if (strcmp(method, "GET") == 0) {
-            /* Discross supports GET /send?message=...&channel=... */
-            req_len = snprintf(request, sizeof(request),
-                "GET /send?message=%s&channel=%s HTTP/1.1\r\n"
-                "Host: %s:%d\r\n"
-                "Cookie: sessionID=%s\r\n"
-                "Referer: /channels/%s\r\n"
-                "User-Agent: openMenu-Dreamcast/1.2-discross\r\n"
-                "Connection: close\r\n"
-                "\r\n",
-                enc_msg, enc_channel, data->host, data->port, data->session_id, enc_channel);
-        } else {
-            char body[768];
-            snprintf(body, sizeof(body), "message=%s&channel=%s", enc_msg, enc_channel);
-            int body_len = strlen(body);
-            req_len = snprintf(request, sizeof(request),
-                "POST /send HTTP/1.1\r\n"
-                "Host: %s:%d\r\n"
-                "Cookie: sessionID=%s\r\n"
-                "Referer: /channels/%s\r\n"
-                "Content-Type: application/x-www-form-urlencoded\r\n"
-                "Content-Length: %d\r\n"
-                "User-Agent: openMenu-Dreamcast/1.2-discross\r\n"
-                "Connection: close\r\n"
-                "\r\n"
-                "%s",
-                data->host, data->port, data->session_id, enc_channel, body_len, body);
-        }
+    char response[4096];
+    int result = dchat_http_exchange_headers(sock, request, req_len, response, sizeof(response), timeout_ms);
+    dchat_close_socket(sock);
 
-        char response[4096];
-        int result = dchat_http_exchange_headers(sock, request, req_len, response, sizeof(response), timeout_ms);
-        dchat_close_socket(sock);
-
-        if (result < 0) {
-            if (result == -7) {
-                printf("Discross: No response headers (timeout), assuming send OK\n");
-                return 0;
-            }
-            snprintf(data->error_message, sizeof(data->error_message),
-                    "Send failed (%d)", result);
-            return result;
-        }
-
-        /* Discross returns 302 redirect on success */
-        int status = dchat_http_status(response);
-        last_status = status;
-        if (dchat_response_requires_login(response)) {
-            strcpy(data->error_message, "Session expired - re-login needed");
-            data->logged_in = false;
-            return -10;
-        }
-
-        if (status == 302 || status == 303 || status == 200 || status == 204) {
-            printf("Discross: Message sent OK (HTTP %d via %s)\n", status, method);
+    if (result < 0) {
+        if (result == -7) {
+            printf("Discross: No response headers (timeout), assuming send OK\n");
             return 0;
         }
+        snprintf(data->error_message, sizeof(data->error_message),
+                "Send failed (%d)", result);
+        return result;
+    }
 
-        printf("Discross: Message send failed (HTTP %d via %s), retrying...\n", status, method);
+    /* Discross returns 302 redirect on success */
+    int status = dchat_http_status(response);
+    if (dchat_response_requires_login(response)) {
+        strcpy(data->error_message, "Session expired - re-login needed");
+        data->logged_in = false;
+        return -10;
+    }
+
+    if (status == 302 || status == 303 || status == 200 || status == 204) {
+        printf("Discross: Message sent OK (HTTP %d)\n", status);
+        return 0;
     }
 
     snprintf(data->error_message, sizeof(data->error_message),
-            "Send failed (HTTP %d)", last_status);
+            "Send failed (HTTP %d)", status);
     return -10;
 
 #else
