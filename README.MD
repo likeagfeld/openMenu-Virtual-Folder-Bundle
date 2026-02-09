@@ -1,6 +1,8 @@
 # DC Now (Dreamcast NOW!) Player Status
 🆕 NEW FEATURE: View active player counts for Dreamcast NOW! games in real-time!
 
+<img align="right" width="300" src="https://gifyu.com/image/bkDrp?raw=true">
+
 Press L + R triggers together to open the DC Now popup, which displays:
 
 Total active players across all Dreamcast NOW! games
