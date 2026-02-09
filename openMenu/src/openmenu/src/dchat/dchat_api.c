@@ -174,6 +174,52 @@ static int dchat_http_exchange(int sock, const char *request, int req_len,
 }
 
 /**
+ * Send a HTTP request and read only the response headers.
+ * Returns bytes stored in response (header-only), negative on error.
+ */
+static int dchat_http_exchange_headers(int sock, const char *request, int req_len,
+                                       char *response, int buf_size, uint32_t timeout_ms) {
+#ifdef _arch_dreamcast
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+#endif
+    int sent = send(sock, request, req_len, 0);
+    if (sent <= 0) {
+        printf("Discross: Send failed\n");
+        return -5;
+    }
+
+    uint64_t start = timer_ms_gettime64();
+    int total = 0;
+
+    while (total < buf_size - 1) {
+        if (timer_ms_gettime64() - start > timeout_ms) break;
+
+        int n = recv(sock, response + total, buf_size - total - 1, 0);
+        if (n > 0) {
+            total += n;
+            response[total] = '\0';
+            start = timer_ms_gettime64();
+            if (strstr(response, "\r\n\r\n")) {
+                break;
+            }
+        } else if (n == 0) {
+            break;
+        } else {
+            if (total == 0) return -6;
+            break;
+        }
+        thd_pass();
+    }
+
+    response[total] = '\0';
+    return total;
+}
+
+/**
  * Like dchat_http_exchange but skips data until a marker string is found.
  * This is critical for message pages where the <head> section is 30-40KB
  * of CSS/JS that would waste our limited buffer. By skipping to <body> or
@@ -1206,7 +1252,7 @@ int dchat_send_message(dchat_data_t *data, const char *channel_id,
         }
 
         char response[4096];
-        int result = dchat_http_exchange(sock, request, req_len, response, sizeof(response), timeout_ms);
+        int result = dchat_http_exchange_headers(sock, request, req_len, response, sizeof(response), timeout_ms);
         dchat_close_socket(sock);
 
         if (result < 0) {
