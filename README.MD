@@ -1,3 +1,40 @@
+# DC Now (Dreamcast NOW!) Player Status
+🆕 NEW FEATURE: View active player counts for Dreamcast NOW! games in real-time!
+
+Press L + R triggers together to open the DC Now popup, which displays:
+
+Total active players across all Dreamcast NOW! games
+Individual game names with their current player counts
+Drilldown player details (level, country)
+Real-time status (online/offline) for each game
+VMU Mini Display of active players per game
+Background auto-refresh every 60 seconds
+
+Requirements:
+
+Network connectivity via:
+1. DreamPi Modem OR DreamPi 2.0 + Serial Coders Cable
+2. Internet connection to reach dreamcast.online
+
+Controls:
+
+START -> Settings Menu -> DC NOW!: Open Dreamcast NOW! Popup to connect / view status
+L + R: Alternative key combo to open DC Now popup
+Up/Down: Scroll through game list
+START -> Settings Menu -> DC NOW! VMU: Toggle DC NOW VMU display feature On/Off
+B: Close popup
+X/L+R: Refresh data
+Y: Disconnect
+A: Details
+
+Note: The data is automatically cached after the first fetch to reduce network calls. Manual or auto refresh with the latest player counts.
+
+SPECIAL THANKS TO KAZADE FOR THEIR AMAZING DREAMCAST NOW! IMPLEMENTATION FOR WHICH THIS WOULD NOT BE POSSIBLE WITHOUT ;)
+
+
+
+
+
 # openMenu Virtual Folder Bundle
 
 <img align="right" width="300" src="https://github.com/DerekPascarella/openMenu-Virtual-Folder-Bundle/blob/main/images/preview.gif?raw=true">
