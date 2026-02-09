@@ -5718,12 +5718,14 @@ draw_discord_chat_tr(void) {
             } else {
                 int vis = dchat_data.message_count < max_visible ?
                           dchat_data.message_count : max_visible;
+                dchat_message_t *selected_msg = NULL;
 
                 for (int i = 0; i < vis; i++) {
                     int msg_idx = dchat_scroll_offset + i;
                     if (msg_idx >= dchat_data.message_count) break;
                     dchat_message_t *msg = &dchat_data.messages[msg_idx];
                     bool selected = (msg_idx == dchat_choice);
+                    if (selected) selected_msg = msg;
 
                     font_bmp_set_color(selected ? 0xFFFF8800 : 0xFF7289DA);
                     int uname_width = strlen(msg->username) * 8;
@@ -5755,6 +5757,35 @@ draw_discord_chat_tr(void) {
                     font_bmp_set_color(0xFFBBBBBB);
                     font_bmp_draw_main(x_item, cur_y, scroll_info);
                     cur_y += line_height;
+                }
+
+                if (selected_msg && selected_msg->content[0]) {
+                    cur_y += 2;
+                    int box_lines = 3;
+                    int box_h = line_height * box_lines + 4;
+                    draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, box_h, 0xFF1A1A2E);
+                    draw_draw_quad(x_item - 2, cur_y - 2, width - padding + 4, 2, 0xFF7289DA);
+
+                    int chars_per_line = (width - padding) / 8;
+                    if (chars_per_line < 10) chars_per_line = 10;
+                    int total_len = (int)strlen(selected_msg->content);
+                    int total_lines = (total_len + chars_per_line - 1) / chars_per_line;
+                    if (total_lines < 1) total_lines = 1;
+                    int start_line = 0;
+                    if (total_lines > box_lines) start_line = total_lines - box_lines;
+
+                    font_bmp_set_color(0xFFFFFFFF);
+                    for (int ln = start_line; ln < total_lines && ln < start_line + box_lines; ln++) {
+                        int ln_start = ln * chars_per_line;
+                        int ln_len = total_len - ln_start;
+                        if (ln_len > chars_per_line) ln_len = chars_per_line;
+                        char line_buf[80];
+                        if (ln_len > (int)sizeof(line_buf) - 1) ln_len = (int)sizeof(line_buf) - 1;
+                        memcpy(line_buf, selected_msg->content + ln_start, ln_len);
+                        line_buf[ln_len] = '\0';
+                        font_bmp_draw_main(x_item, cur_y, line_buf);
+                        cur_y += line_height;
+                    }
                 }
             }
 

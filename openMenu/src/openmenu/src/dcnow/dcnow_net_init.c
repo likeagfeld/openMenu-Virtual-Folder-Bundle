@@ -7,14 +7,74 @@
 #include <kos.h>
 #include <kos/net.h>
 #include <ppp/ppp.h>
+#include <kos/thread.h>
 #include <dc/modem/modem.h>
 #include <dc/scif.h>
 #include <arch/timer.h>
 #include <dc/pvr.h>
+#include <arpa/inet.h>
 #endif
 
 /* Serial coders cable connection state */
 static int serial_connection_active = 0;
+
+#ifdef _arch_dreamcast
+#define PPP_PROTOCOL_LCP 0xc021
+#define LCP_ECHO_REQUEST 9
+#define PPP_KEEPALIVE_INTERVAL_MS 30000
+
+typedef struct {
+    uint8_t code;
+    uint8_t id;
+    uint16_t len;
+    uint32_t magic;
+    uint32_t data;
+} __attribute__((packed)) ppp_lcp_echo_t;
+
+static kthread_t *ppp_keepalive_thread = NULL;
+static volatile int ppp_keepalive_running = 0;
+static uint8_t ppp_keepalive_id = 0;
+
+static void *ppp_keepalive_task(void *param) {
+    (void)param;
+
+    while (ppp_keepalive_running) {
+        if (net_default_dev && strncmp(net_default_dev->name, "ppp", 3) == 0) {
+            ppp_lcp_echo_t pkt;
+            pkt.code = LCP_ECHO_REQUEST;
+            pkt.id = ++ppp_keepalive_id;
+            pkt.len = htons(sizeof(pkt));
+            pkt.magic = htonl((uint32_t)timer_ms_gettime64());
+            pkt.data = htonl(0);
+            ppp_send((const uint8_t *)&pkt, sizeof(pkt), PPP_PROTOCOL_LCP);
+        }
+
+        thd_sleep(PPP_KEEPALIVE_INTERVAL_MS);
+    }
+
+    return NULL;
+}
+
+static void dcnow_ppp_start_keepalive(void) {
+    if (ppp_keepalive_thread) {
+        return;
+    }
+    ppp_keepalive_running = 1;
+    ppp_keepalive_thread = thd_create(0, ppp_keepalive_task, NULL);
+    if (!ppp_keepalive_thread) {
+        ppp_keepalive_running = 0;
+    }
+}
+
+static void dcnow_ppp_stop_keepalive(void) {
+    if (!ppp_keepalive_thread) {
+        return;
+    }
+    ppp_keepalive_running = 0;
+    thd_join(ppp_keepalive_thread, NULL);
+    ppp_keepalive_thread = NULL;
+}
+#endif
 
 #ifdef _arch_dreamcast
 /* Helper to write a string to SCIF (serial port) */
@@ -241,6 +301,7 @@ static int try_serial_coders_cable(void) {
 
     update_status("Connected via serial!");
     serial_connection_active = 1;
+    dcnow_ppp_start_keepalive();
     printf("DC Now: Serial coders cable connection established!\n");
     return 0;
 
@@ -297,6 +358,7 @@ static int try_modem_dialup(void) {
     }
 
     update_status("Connected!");
+    dcnow_ppp_start_keepalive();
     printf("DC Now: Modem connection established!\n");
     return 0;
 
@@ -379,6 +441,7 @@ void dcnow_net_disconnect(void) {
     /* Check if it's a PPP connection (modem or serial) */
     if (strncmp(net_default_dev->name, "ppp", 3) == 0) {
         printf("DC Now: Shutting down PPP connection...\n");
+        dcnow_ppp_stop_keepalive();
         ppp_shutdown();
 
         /* Give PPP time to shut down */
