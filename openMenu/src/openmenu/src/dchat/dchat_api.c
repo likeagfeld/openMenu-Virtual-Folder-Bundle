@@ -1218,17 +1218,18 @@ int dchat_send_message(dchat_data_t *data, const char *channel_id,
         return sock;
     }
 
-    /* Discross uses GET /send?message=...&channel=... */
+    /* Discross fork accepts channel or channel_id in query */
     char request[1024];
     int req_len = snprintf(request, sizeof(request),
-        "GET /send?message=%s&channel=%s HTTP/1.1\r\n"
+        "GET /send?message=%s&channel=%s&channel_id=%s HTTP/1.1\r\n"
         "Host: %s:%d\r\n"
         "Cookie: sessionID=%s\r\n"
         "Referer: /channels/%s\r\n"
         "User-Agent: openMenu-Dreamcast/1.2-discross\r\n"
         "Connection: close\r\n"
         "\r\n",
-        enc_msg, enc_channel, data->host, data->port, data->session_id, enc_channel);
+        enc_msg, enc_channel, enc_channel,
+        data->host, data->port, data->session_id, enc_channel);
 
     char response[4096];
     int result = dchat_http_exchange_headers(sock, request, req_len, response, sizeof(response), timeout_ms);
