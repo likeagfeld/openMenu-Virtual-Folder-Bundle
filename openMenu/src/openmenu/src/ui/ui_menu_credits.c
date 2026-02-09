@@ -4282,6 +4282,14 @@ static int dchat_osk_col = 0;
 static bool dchat_osk_shift = false;
 static int dchat_osk_max_len = DCHAT_INPUT_BUF_LEN;  /* max chars for current field */
 
+/* Async send state (to avoid UI blocking) */
+static volatile bool dchat_send_pending = false;
+static volatile bool dchat_send_done = false;
+static int dchat_send_result = -1;
+static kthread_t *dchat_send_thread = NULL;
+static char dchat_send_buf[DCHAT_INPUT_BUF_LEN];
+static char dchat_send_channel[DCHAT_MAX_ID_LEN];
+
 /* Keyboard layout (lowercase) */
 static const char osk_keys_lower[OSK_ROWS][OSK_COLS] = {
     {'1','2','3','4','5','6','7','8','9','0'},
@@ -4646,9 +4654,36 @@ static bool dchat_handle_text_entry_controls(enum control input, int max_len) {
     }
 }
 
+#ifdef _arch_dreamcast
+static void *dchat_send_thread_func(void *param) {
+    (void)param;
+    dchat_send_result = dchat_send_message(&dchat_data,
+        dchat_send_channel, dchat_send_buf, 5000);
+    dchat_send_done = true;
+    return NULL;
+}
+#endif
+
+static void dchat_begin_send(void) {
+    if (dchat_input_pos <= 0 || dchat_sending) return;
+    dchat_sending = true;
+    strncpy(dchat_send_buf, dchat_input_buf, sizeof(dchat_send_buf) - 1);
+    dchat_send_buf[sizeof(dchat_send_buf) - 1] = '\0';
+    strncpy(dchat_send_channel, dchat_data.current_channel_id, sizeof(dchat_send_channel) - 1);
+    dchat_send_channel[sizeof(dchat_send_channel) - 1] = '\0';
+    dchat_send_pending = true;
+}
+
 void
 handle_input_discord_chat(enum control input) {
     if (dchat_navigate_timeout && *dchat_navigate_timeout > 0) {
+        return;
+    }
+
+    if (dchat_view == DCHAT_VIEW_COMPOSE &&
+        INPT_KeyboardButtonPress(0x28)) {
+        dchat_begin_send();
+        if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
         return;
     }
 
@@ -4840,33 +4875,6 @@ handle_input_discord_chat(enum control input) {
     /* --- Compose view: keyboard text input --- */
     if (dchat_view == DCHAT_VIEW_COMPOSE) {
         dchat_process_keyboard_input(DCHAT_INPUT_BUF_LEN);
-        /* Enter key on keyboard = send message */
-        if (INPT_KeyboardButtonPress(0x28)) {
-            if (dchat_input_pos > 0 && !dchat_sending) {
-                dchat_sending = true;
-                printf("Discross: Sending message: %s\n", dchat_input_buf);
-#ifdef _arch_dreamcast
-                int result = dchat_send_message(&dchat_data,
-                    dchat_data.current_channel_id, dchat_input_buf, 5000);
-                if (result == 0) {
-                    memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
-                    dchat_input_pos = 0;
-                    dchat_needs_fetch = true;
-                    dchat_shown_loading = false;
-                    dchat_is_loading = true;
-                    dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
-                    dchat_view = DCHAT_VIEW_MESSAGES;
-                }
-#else
-                memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
-                dchat_input_pos = 0;
-                dchat_view = DCHAT_VIEW_MESSAGES;
-#endif
-                dchat_sending = false;
-            }
-            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
-            return;
-        }
         /* Skip controller actions when keyboard is active (keys map to buttons) */
         if (!INPT_KeyboardNone()) return;
         if (dchat_handle_text_entry_controls(input, DCHAT_INPUT_BUF_LEN)) return;
@@ -4877,28 +4885,7 @@ handle_input_discord_chat(enum control input) {
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
             case A: {
-                if (dchat_input_pos > 0 && !dchat_sending) {
-                    dchat_sending = true;
-                    printf("Discross: Sending message: %s\n", dchat_input_buf);
-#ifdef _arch_dreamcast
-                    int result = dchat_send_message(&dchat_data,
-                        dchat_data.current_channel_id, dchat_input_buf, 5000);
-                    if (result == 0) {
-                        memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
-                        dchat_input_pos = 0;
-                        dchat_needs_fetch = true;
-                        dchat_shown_loading = false;
-                        dchat_is_loading = true;
-                        dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
-                        dchat_view = DCHAT_VIEW_MESSAGES;
-                    }
-#else
-                    memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
-                    dchat_input_pos = 0;
-                    dchat_view = DCHAT_VIEW_MESSAGES;
-#endif
-                    dchat_sending = false;
-                }
+                dchat_begin_send();
                 if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
             } break;
             default: break;
@@ -5204,6 +5191,43 @@ draw_discord_chat_tr(void) {
             printf("Discross: Login failed: %d\n", result);
             dchat_is_loading = false;
         }
+    }
+#endif
+
+    /* --- Handle pending send --- */
+#ifdef _arch_dreamcast
+    if (dchat_send_pending && !dchat_send_thread) {
+        dchat_send_pending = false;
+        dchat_send_done = false;
+        dchat_send_result = -1;
+        dchat_send_thread = thd_create(0, dchat_send_thread_func, NULL);
+        if (!dchat_send_thread) {
+            dchat_sending = false;
+            strcpy(dchat_data.error_message, "Send failed (thread create)");
+        }
+    }
+
+    if (dchat_send_done) {
+        dchat_send_done = false;
+        dchat_send_thread = NULL;
+        dchat_sending = false;
+        if (dchat_send_result == 0) {
+            memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
+            dchat_input_pos = 0;
+            dchat_needs_fetch = true;
+            dchat_shown_loading = false;
+            dchat_is_loading = true;
+            dchat_pending_fetch = DCHAT_FETCH_MESSAGES;
+            dchat_view = DCHAT_VIEW_MESSAGES;
+        }
+    }
+#else
+    if (dchat_send_pending) {
+        dchat_send_pending = false;
+        dchat_sending = false;
+        memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
+        dchat_input_pos = 0;
+        dchat_view = DCHAT_VIEW_MESSAGES;
     }
 #endif
 
