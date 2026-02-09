@@ -132,7 +132,6 @@ static int dchat_http_exchange(int sock, const char *request, int req_len,
     uint64_t start = timer_ms_gettime64();
     int total = 0;
     bool buffer_full = false;
-
     while (total < buf_size - 1) {
         if (timer_ms_gettime64() - start > timeout_ms) break;
 
@@ -194,9 +193,13 @@ static int dchat_http_exchange_headers(int sock, const char *request, int req_le
 
     uint64_t start = timer_ms_gettime64();
     int total = 0;
+    bool timed_out = false;
 
     while (total < buf_size - 1) {
-        if (timer_ms_gettime64() - start > timeout_ms) break;
+        if (timer_ms_gettime64() - start > timeout_ms) {
+            timed_out = true;
+            break;
+        }
 
         int n = recv(sock, response + total, buf_size - total - 1, 0);
         if (n > 0) {
@@ -216,6 +219,7 @@ static int dchat_http_exchange_headers(int sock, const char *request, int req_le
     }
 
     response[total] = '\0';
+    if (timed_out && total == 0) return -7;
     return total;
 }
 
@@ -1256,6 +1260,10 @@ int dchat_send_message(dchat_data_t *data, const char *channel_id,
         dchat_close_socket(sock);
 
         if (result < 0) {
+            if (result == -7) {
+                printf("Discross: No response headers (timeout), assuming send OK\n");
+                return 0;
+            }
             snprintf(data->error_message, sizeof(data->error_message),
                     "Send failed (%d)", result);
             return result;
