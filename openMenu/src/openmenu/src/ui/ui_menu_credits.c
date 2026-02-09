@@ -4285,10 +4285,12 @@ static int dchat_osk_max_len = DCHAT_INPUT_BUF_LEN;  /* max chars for current fi
 /* Async send state (to avoid UI blocking) */
 static volatile bool dchat_send_pending = false;
 static volatile bool dchat_send_done = false;
+static volatile bool dchat_send_ignore_result = false;
 static int dchat_send_result = -1;
 static kthread_t *dchat_send_thread = NULL;
 static char dchat_send_buf[DCHAT_INPUT_BUF_LEN];
 static char dchat_send_channel[DCHAT_MAX_ID_LEN];
+static uint64_t dchat_send_start_ms = 0;
 
 /* Keyboard layout (lowercase) */
 static const char osk_keys_lower[OSK_ROWS][OSK_COLS] = {
@@ -4667,11 +4669,61 @@ static void *dchat_send_thread_func(void *param) {
 static void dchat_begin_send(void) {
     if (dchat_input_pos <= 0 || dchat_sending) return;
     dchat_sending = true;
+    dchat_send_ignore_result = false;
+    dchat_send_start_ms = timer_ms_gettime64();
     strncpy(dchat_send_buf, dchat_input_buf, sizeof(dchat_send_buf) - 1);
     dchat_send_buf[sizeof(dchat_send_buf) - 1] = '\0';
     strncpy(dchat_send_channel, dchat_data.current_channel_id, sizeof(dchat_send_channel) - 1);
     dchat_send_channel[sizeof(dchat_send_channel) - 1] = '\0';
     dchat_send_pending = true;
+}
+
+static bool dchat_handle_keyboard_enter(void) {
+    if (!INPT_KeyboardButtonPress(0x28)) {
+        return false;
+    }
+
+    if (dchat_view == DCHAT_VIEW_COMPOSE) {
+        dchat_begin_send();
+        if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+        return true;
+    }
+
+    if (dchat_view == DCHAT_VIEW_ENTER_HOST && dchat_input_pos > 0) {
+        strncpy(dchat_cred_host, dchat_input_buf, SF_DISCROSS_HOST_LEN - 1);
+        dchat_cred_host[SF_DISCROSS_HOST_LEN - 1] = '\0';
+        dchat_view = DCHAT_VIEW_ENTER_USER;
+        strncpy(dchat_input_buf, dchat_cred_user, DCHAT_INPUT_BUF_LEN - 1);
+        dchat_input_pos = strlen(dchat_input_buf);
+        if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+        return true;
+    }
+
+    if (dchat_view == DCHAT_VIEW_ENTER_USER && dchat_input_pos > 0) {
+        strncpy(dchat_cred_user, dchat_input_buf, SF_DISCROSS_CRED_LEN - 1);
+        dchat_cred_user[SF_DISCROSS_CRED_LEN - 1] = '\0';
+        dchat_view = DCHAT_VIEW_ENTER_PASS;
+        strncpy(dchat_input_buf, dchat_cred_pass, DCHAT_INPUT_BUF_LEN - 1);
+        dchat_input_pos = strlen(dchat_input_buf);
+        if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+        return true;
+    }
+
+    if (dchat_view == DCHAT_VIEW_ENTER_PASS && dchat_input_pos > 0) {
+        strncpy(dchat_cred_pass, dchat_input_buf, SF_DISCROSS_CRED_LEN - 1);
+        dchat_cred_pass[SF_DISCROSS_CRED_LEN - 1] = '\0';
+        dchat_set_config(&dchat_data, dchat_cred_host, DCHAT_DEFAULT_PORT,
+                         dchat_cred_user, dchat_cred_pass);
+        dchat_save_creds_to_settings();
+        dchat_view = DCHAT_VIEW_LOGIN;
+        dchat_needs_login = true;
+        dchat_is_loading = true;
+        dchat_shown_loading = false;
+        if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+        return true;
+    }
+
+    return false;
 }
 
 void
@@ -4680,10 +4732,7 @@ handle_input_discord_chat(enum control input) {
         return;
     }
 
-    if (dchat_view == DCHAT_VIEW_COMPOSE &&
-        INPT_KeyboardButtonPress(0x28)) {
-        dchat_begin_send();
-        if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
+    if (dchat_handle_keyboard_enter()) {
         return;
     }
 
@@ -4749,16 +4798,6 @@ handle_input_discord_chat(enum control input) {
     /* --- Credential entry: Host --- */
     if (dchat_view == DCHAT_VIEW_ENTER_HOST) {
         dchat_process_keyboard_input(SF_DISCROSS_HOST_LEN);
-        /* Enter key on keyboard = advance to next field */
-        if (INPT_KeyboardButtonPress(0x28) && dchat_input_pos > 0) {
-            strncpy(dchat_cred_host, dchat_input_buf, SF_DISCROSS_HOST_LEN - 1);
-            dchat_cred_host[SF_DISCROSS_HOST_LEN - 1] = '\0';
-            dchat_view = DCHAT_VIEW_ENTER_USER;
-            strncpy(dchat_input_buf, dchat_cred_user, DCHAT_INPUT_BUF_LEN - 1);
-            dchat_input_pos = strlen(dchat_input_buf);
-            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
-            return;
-        }
         /* Skip controller actions when keyboard is active (keys map to buttons) */
         if (!INPT_KeyboardNone()) return;
         if (dchat_handle_text_entry_controls(input, SF_DISCROSS_HOST_LEN)) return;
@@ -4786,16 +4825,6 @@ handle_input_discord_chat(enum control input) {
     /* --- Credential entry: Username --- */
     if (dchat_view == DCHAT_VIEW_ENTER_USER) {
         dchat_process_keyboard_input(SF_DISCROSS_CRED_LEN);
-        /* Enter key on keyboard = advance to next field */
-        if (INPT_KeyboardButtonPress(0x28) && dchat_input_pos > 0) {
-            strncpy(dchat_cred_user, dchat_input_buf, SF_DISCROSS_CRED_LEN - 1);
-            dchat_cred_user[SF_DISCROSS_CRED_LEN - 1] = '\0';
-            dchat_view = DCHAT_VIEW_ENTER_PASS;
-            strncpy(dchat_input_buf, dchat_cred_pass, DCHAT_INPUT_BUF_LEN - 1);
-            dchat_input_pos = strlen(dchat_input_buf);
-            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
-            return;
-        }
         /* Skip controller actions when keyboard is active (keys map to buttons) */
         if (!INPT_KeyboardNone()) return;
         if (dchat_handle_text_entry_controls(input, SF_DISCROSS_CRED_LEN)) return;
@@ -4826,20 +4855,6 @@ handle_input_discord_chat(enum control input) {
     /* --- Credential entry: Password --- */
     if (dchat_view == DCHAT_VIEW_ENTER_PASS) {
         dchat_process_keyboard_input(SF_DISCROSS_CRED_LEN);
-        /* Enter key on keyboard = submit credentials and login */
-        if (INPT_KeyboardButtonPress(0x28) && dchat_input_pos > 0) {
-            strncpy(dchat_cred_pass, dchat_input_buf, SF_DISCROSS_CRED_LEN - 1);
-            dchat_cred_pass[SF_DISCROSS_CRED_LEN - 1] = '\0';
-            dchat_set_config(&dchat_data, dchat_cred_host, DCHAT_DEFAULT_PORT,
-                             dchat_cred_user, dchat_cred_pass);
-            dchat_save_creds_to_settings();
-            dchat_view = DCHAT_VIEW_LOGIN;
-            dchat_needs_login = true;
-            dchat_is_loading = true;
-            dchat_shown_loading = false;
-            if (dchat_navigate_timeout) *dchat_navigate_timeout = DCHAT_INPUT_TIMEOUT_INITIAL;
-            return;
-        }
         /* Skip controller actions when keyboard is active (keys map to buttons) */
         if (!INPT_KeyboardNone()) return;
         if (dchat_handle_text_entry_controls(input, SF_DISCROSS_CRED_LEN)) return;
@@ -5211,7 +5226,9 @@ draw_discord_chat_tr(void) {
         dchat_send_done = false;
         dchat_send_thread = NULL;
         dchat_sending = false;
-        if (dchat_send_result == 0) {
+        if (dchat_send_ignore_result) {
+            dchat_send_ignore_result = false;
+        } else if (dchat_send_result == 0) {
             memset(dchat_input_buf, 0, sizeof(dchat_input_buf));
             dchat_input_pos = 0;
             dchat_needs_fetch = true;
@@ -5230,6 +5247,16 @@ draw_discord_chat_tr(void) {
         dchat_view = DCHAT_VIEW_MESSAGES;
     }
 #endif
+
+    if (dchat_sending) {
+        uint64_t now = timer_ms_gettime64();
+        if ((now - dchat_send_start_ms) > 10000) {
+            dchat_send_ignore_result = true;
+            dchat_sending = false;
+            snprintf(dchat_data.error_message, sizeof(dchat_data.error_message),
+                     "Send timed out");
+        }
+    }
 
     /* --- Handle pending data fetch --- */
 #ifdef _arch_dreamcast
