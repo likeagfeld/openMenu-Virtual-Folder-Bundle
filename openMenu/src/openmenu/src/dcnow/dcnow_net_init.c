@@ -148,41 +148,67 @@ static int try_serial_coders_cable(void) {
     /* Small delay after flush */
     timer_spin_sleep(100);
 
-    /* Send AT command to check for listening DreamPi */
-    update_status("Sending AT command...");
-    scif_write_string("AT\r\n");
-    scif_flush();  /* Ensure data is transmitted */
+    /* Send AT command with retry logic.
+     * USB-to-serial adapters (especially FTDI) can have line noise or need
+     * time to stabilize after SCIF initialization. Retrying the AT command
+     * up to 3 times significantly improves reliability across cable types. */
+    const int AT_MAX_RETRIES = 3;
+    int at_attempt;
+    int got_ok = 0;
 
-    /* Wait for DreamPi to process before reading response.
-     * Do NOT call update_status here - even though printf is suppressed,
-     * we want minimal delay between sending AT and reading the response. */
-    timer_spin_sleep(500);
-
-    /* Wait for OK response with timeout */
-    memset(buf, 0, sizeof(buf));
-    bytes_read = 0;
-    start_time = timer_ms_gettime64();
-
-    while ((timer_ms_gettime64() - start_time) < TIMEOUT_MS) {
-        int c = scif_read();
-        if (c != -1 && bytes_read < (int)sizeof(buf) - 1) {
-            buf[bytes_read++] = (char)c;
-            buf[bytes_read] = '\0';
-
-            /* Check for OK response */
-            if (strstr(buf, "OK") != NULL) {
-                serial_log("Serial - Got OK response from DreamPi");
-                break;
-            }
+    for (at_attempt = 0; at_attempt < AT_MAX_RETRIES; at_attempt++) {
+        if (at_attempt > 0) {
+            /* Between retries: drain any garbage and wait for line to settle */
+            char retry_msg[48];
+            snprintf(retry_msg, sizeof(retry_msg), "AT retry %d of %d...", at_attempt + 1, AT_MAX_RETRIES);
+            update_status(retry_msg);
+            serial_log(retry_msg);
+            timer_spin_sleep(300);
+            while (scif_read() != -1) { /* drain buffer */ }
+            timer_spin_sleep(200);
+        } else {
+            update_status("Sending AT command...");
         }
-        timer_spin_sleep(10);  /* Small delay to avoid busy loop */
+
+        scif_write_string("AT\r\n");
+        scif_flush();  /* Ensure data is transmitted */
+
+        /* Wait for DreamPi to process before reading response */
+        timer_spin_sleep(500);
+
+        /* Wait for OK response with timeout */
+        memset(buf, 0, sizeof(buf));
+        bytes_read = 0;
+        start_time = timer_ms_gettime64();
+
+        while ((timer_ms_gettime64() - start_time) < TIMEOUT_MS) {
+            int c = scif_read();
+            if (c != -1 && bytes_read < (int)sizeof(buf) - 1) {
+                buf[bytes_read++] = (char)c;
+                buf[bytes_read] = '\0';
+
+                /* Check for OK response */
+                if (strstr(buf, "OK") != NULL) {
+                    serial_log("Serial - Got OK response from DreamPi");
+                    got_ok = 1;
+                    break;
+                }
+            }
+            timer_spin_sleep(10);  /* Small delay to avoid busy loop */
+        }
+
+        if (got_ok) break;
+
+        /* Log what we got on this attempt */
+        char log_msg[96];
+        snprintf(log_msg, sizeof(log_msg), "AT attempt %d: no OK - got %d bytes: %.20s",
+                 at_attempt + 1, bytes_read, buf);
+        serial_log(log_msg);
     }
 
-    if (strstr(buf, "OK") == NULL) {
-        /* Log what we received for debugging */
-        char log_msg[96];
-        snprintf(log_msg, sizeof(log_msg), "No OK - got %d bytes: %.20s", bytes_read, buf);
-        serial_log(log_msg);
+    if (!got_ok) {
+        /* All AT retries exhausted */
+        serial_log("All AT retries failed - no DreamPi detected");
 
         /* Restore SCIF to default state for KOS debug output */
         scif_set_parameters(57600, 1);
@@ -192,7 +218,7 @@ static int try_serial_coders_cable(void) {
 
         /* Now we can show status on screen (printf will work again) */
         char status_msg[80];
-        snprintf(status_msg, sizeof(status_msg), "No OK - got %d bytes: %.20s", bytes_read, buf);
+        snprintf(status_msg, sizeof(status_msg), "No OK after %d tries - got: %.20s", AT_MAX_RETRIES, buf);
         update_status(status_msg);
         timer_spin_sleep(2000);
         return -1;  /* No DreamPi detected on serial */
@@ -352,6 +378,8 @@ static int try_modem_dialup(void) {
     /* Initialize PPP subsystem */
     if (ppp_init() < 0) {
         update_status("PPP init failed!");
+        modem_shutdown();
+        timer_spin_sleep(200);
         return -2;
     }
 
@@ -361,6 +389,8 @@ static int try_modem_dialup(void) {
     if (err) {
         update_status("Dial failed!");
         ppp_shutdown();
+        modem_shutdown();
+        timer_spin_sleep(200);
         return -3;
     }
 
@@ -368,6 +398,8 @@ static int try_modem_dialup(void) {
     if (ppp_set_login("dream", "dreamcast") < 0) {
         update_status("Login setup failed!");
         ppp_shutdown();
+        modem_shutdown();
+        timer_spin_sleep(200);
         return -4;
     }
 
@@ -377,6 +409,8 @@ static int try_modem_dialup(void) {
     if (err) {
         update_status("Connection failed!");
         ppp_shutdown();
+        modem_shutdown();
+        timer_spin_sleep(200);
         return -5;
     }
 
