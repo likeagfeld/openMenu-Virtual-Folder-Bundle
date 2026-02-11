@@ -38,7 +38,7 @@ void dcnow_worker_init(void) {
     worker_thread = NULL;
 #endif
     active_ctx = NULL;
-    printf("DC Now Worker: Initialized\n");
+    DCNOW_DPRINTF("DC Now Worker: Initialized\n");
 }
 
 void dcnow_worker_shutdown(void) {
@@ -51,7 +51,7 @@ void dcnow_worker_shutdown(void) {
 
     /* Join worker thread if it's running */
     if (worker_thread) {
-        printf("DC Now Worker: Joining worker thread for shutdown...\n");
+        DCNOW_DPRINTF("DC Now Worker: Joining worker thread for shutdown...\n");
         thd_join(worker_thread, NULL);
         worker_thread = NULL;
     }
@@ -59,7 +59,7 @@ void dcnow_worker_shutdown(void) {
     mutex_destroy(&worker_mutex);
 #endif
     active_ctx = NULL;
-    printf("DC Now Worker: Shutdown complete\n");
+    DCNOW_DPRINTF("DC Now Worker: Shutdown complete\n");
 }
 
 /**
@@ -84,7 +84,7 @@ static void* connect_worker_func(void* arg) {
 #ifdef _arch_dreamcast
     dcnow_worker_context_t* ctx = (dcnow_worker_context_t*)arg;
 
-    printf("DC Now Worker: Connect thread started (method=%d)\n", worker_conn_method);
+    DCNOW_DPRINTF("DC Now Worker: Connect thread started (method=%d)\n", worker_conn_method);
 
     mutex_lock(&worker_mutex);
     ctx->state = DCNOW_WORKER_CONNECTING;
@@ -110,12 +110,12 @@ static void* connect_worker_func(void* arg) {
         ctx->state = DCNOW_WORKER_ERROR;
         ctx->error_code = result;
         snprintf((char*)ctx->status_message, 127, "Connection failed (error %d)", result);
-        printf("DC Now Worker: Connection failed with error %d\n", result);
+        DCNOW_DPRINTF("DC Now Worker: Connection failed with error %d\n", result);
     } else {
         ctx->state = DCNOW_WORKER_DONE;
         ctx->error_code = 0;
         strncpy((char*)ctx->status_message, "Connected!", 127);
-        printf("DC Now Worker: Connection successful\n");
+        DCNOW_DPRINTF("DC Now Worker: Connection successful\n");
     }
     active_ctx = NULL;
     mutex_unlock(&worker_mutex);
@@ -130,7 +130,7 @@ static void* fetch_worker_func(void* arg) {
 #ifdef _arch_dreamcast
     dcnow_worker_context_t* ctx = (dcnow_worker_context_t*)arg;
 
-    printf("DC Now Worker: Fetch thread started\n");
+    DCNOW_DPRINTF("DC Now Worker: Fetch thread started\n");
 
     mutex_lock(&worker_mutex);
     ctx->state = DCNOW_WORKER_FETCHING;
@@ -150,12 +150,12 @@ static void* fetch_worker_func(void* arg) {
         } else {
             snprintf((char*)ctx->status_message, 127, "Fetch failed (error %d)", result);
         }
-        printf("DC Now Worker: Fetch failed with error %d\n", result);
+        DCNOW_DPRINTF("DC Now Worker: Fetch failed with error %d\n", result);
     } else {
         ctx->state = DCNOW_WORKER_DONE;
         ctx->error_code = 0;
         snprintf((char*)ctx->status_message, 127, "Loaded %d games", ctx->result_data.game_count);
-        printf("DC Now Worker: Fetch successful, %d games\n", ctx->result_data.game_count);
+        DCNOW_DPRINTF("DC Now Worker: Fetch successful, %d games\n", ctx->result_data.game_count);
     }
     active_ctx = NULL;
     mutex_unlock(&worker_mutex);
@@ -170,7 +170,7 @@ int dcnow_worker_start_connect(dcnow_worker_context_t* ctx, dcnow_connection_met
     /* Check if already busy */
     if (worker_thread != NULL) {
         mutex_unlock(&worker_mutex);
-        printf("DC Now Worker: Cannot start connect - worker busy\n");
+        DCNOW_DPRINTF("DC Now Worker: Cannot start connect - worker busy\n");
         return -1;
     }
 
@@ -188,13 +188,13 @@ int dcnow_worker_start_connect(dcnow_worker_context_t* ctx, dcnow_connection_met
     /* Create worker thread */
     worker_thread = thd_create(0, connect_worker_func, ctx);
     if (!worker_thread) {
-        printf("DC Now Worker: Failed to create connect thread\n");
+        DCNOW_DPRINTF("DC Now Worker: Failed to create connect thread\n");
         ctx->state = DCNOW_WORKER_ERROR;
         ctx->error_code = -2;
         return -2;
     }
 
-    printf("DC Now Worker: Connect thread created\n");
+    DCNOW_DPRINTF("DC Now Worker: Connect thread created\n");
     return 0;
 #else
     ctx->state = DCNOW_WORKER_ERROR;
@@ -210,7 +210,7 @@ int dcnow_worker_start_fetch(dcnow_worker_context_t* ctx, uint32_t timeout_ms) {
     /* Check if already busy */
     if (worker_thread != NULL) {
         mutex_unlock(&worker_mutex);
-        printf("DC Now Worker: Cannot start fetch - worker busy\n");
+        DCNOW_DPRINTF("DC Now Worker: Cannot start fetch - worker busy\n");
         return -1;
     }
 
@@ -228,13 +228,13 @@ int dcnow_worker_start_fetch(dcnow_worker_context_t* ctx, uint32_t timeout_ms) {
     /* Create worker thread */
     worker_thread = thd_create(0, fetch_worker_func, ctx);
     if (!worker_thread) {
-        printf("DC Now Worker: Failed to create fetch thread\n");
+        DCNOW_DPRINTF("DC Now Worker: Failed to create fetch thread\n");
         ctx->state = DCNOW_WORKER_ERROR;
         ctx->error_code = -2;
         return -2;
     }
 
-    printf("DC Now Worker: Fetch thread created\n");
+    DCNOW_DPRINTF("DC Now Worker: Fetch thread created\n");
     return 0;
 #else
     ctx->state = DCNOW_WORKER_ERROR;
@@ -258,9 +258,9 @@ dcnow_worker_state_t dcnow_worker_poll(dcnow_worker_context_t* ctx) {
         mutex_unlock(&worker_mutex);
 
         /* Join outside mutex to avoid potential deadlock */
-        printf("DC Now Worker: Joining completed thread\n");
+        DCNOW_DPRINTF("DC Now Worker: Joining completed thread\n");
         thd_join(thread_to_join, NULL);
-        printf("DC Now Worker: Thread joined successfully\n");
+        DCNOW_DPRINTF("DC Now Worker: Thread joined successfully\n");
         return state;
     }
 
@@ -280,7 +280,7 @@ void dcnow_worker_cancel(dcnow_worker_context_t* ctx) {
 #ifdef _arch_dreamcast
     mutex_lock(&worker_mutex);
     ctx->cancel_requested = true;
-    printf("DC Now Worker: Cancellation requested\n");
+    DCNOW_DPRINTF("DC Now Worker: Cancellation requested\n");
     mutex_unlock(&worker_mutex);
 #else
     ctx->cancel_requested = true;

@@ -1,4 +1,5 @@
 #include "dcnow_vmu.h"
+#include "dcnow_net_init.h"
 #include <string.h>
 #include <stdio.h>
 #include <openmenu_settings.h>
@@ -427,7 +428,7 @@ static void vmu_update_with_games(const dcnow_data_t *data) {
     /* Render the games list to our bitmap buffer (also pushes to VMU) */
     vmu_render_games_list(data);
 
-    printf("DC Now VMU: Display updated with games list (%d games, %d total players)\n",
+    DCNOW_DPRINTF("DC Now VMU: Display updated with games list (%d games, %d total players)\n",
            data->game_count, data->total_players);
 }
 
@@ -486,7 +487,7 @@ void dcnow_vmu_update_display(const dcnow_data_t *data) {
     vmu_update_with_games(data);
     dcnow_vmu_active = true;
 
-    printf("DC Now VMU: Updated display with %d games\n", data->game_count);
+    DCNOW_DPRINTF("DC Now VMU: Updated display with %d games\n", data->game_count);
 #else
     (void)data;  /* Unused on non-Dreamcast */
 #endif
@@ -502,7 +503,7 @@ void dcnow_vmu_restore_logo(void) {
     vmu_restore_openmenu_logo();
     dcnow_vmu_active = false;
 
-    printf("DC Now VMU: Restored OpenMenu logo\n");
+    DCNOW_DPRINTF("DC Now VMU: Restored OpenMenu logo\n");
 #endif
 }
 

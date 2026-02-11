@@ -137,6 +137,8 @@ static uint64_t dcnow_last_fetch_ms = 0;
 static dcnow_data_t dcnow_temp_data;
 
 static bool dcnow_is_connecting = false;
+static bool dcnow_connect_cooldown_pending = false;
+static dcnow_connection_method_t dcnow_pending_method = DCNOW_CONN_SERIAL;
 static int dcnow_connect_anim_frame = 0;
 
 #ifdef DCNOW_ASYNC
@@ -172,6 +174,37 @@ static void dcnow_connection_status_callback(const char* message) {
     pvr_list_finish();
 
     pvr_scene_finish();
+}
+
+static void dcnow_start_connect_worker_or_sync(void) {
+#ifdef DCNOW_ASYNC
+    dcnow_worker_start_connect(&dcnow_worker_ctx, dcnow_pending_method);
+#else
+    dcnow_set_status_callback(dcnow_connection_status_callback);
+    int net_result = dcnow_net_init_with_method(dcnow_pending_method);
+    dcnow_set_status_callback(NULL);
+    dcnow_is_connecting = false;
+    connection_status[0] = '\0';
+
+    if (net_result < 0) {
+        DCNOW_DPRINTF("DC Now: Connection failed: %d\n", net_result);
+        memset(&dcnow_data, 0, sizeof(dcnow_data));
+        snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
+                "Connection failed (error %d). Press A to retry", net_result);
+        dcnow_data.data_valid = false;
+    } else {
+        DCNOW_DPRINTF("DC Now: Connection successful, starting fetch\n");
+        dcnow_net_initialized = true;
+        memset(&dcnow_data, 0, sizeof(dcnow_data));
+        dcnow_data.data_valid = false;
+
+        dcnow_data_fetched = false;
+        dcnow_is_loading = true;
+        dcnow_choice = 0;
+        dcnow_scroll_offset = 0;
+        dcnow_needs_fetch = true;
+    }
+#endif
 }
 
 void
@@ -252,50 +285,18 @@ handle_input_dcnow(enum control input) {
                 dcnow_conn_choice = 0;  /* Default to Serial */
                 if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
             } else if (dcnow_view == DCNOW_VIEW_CONNECTION_SELECT) {
-                /* User selected a connection method - connect now */
-                printf("DC Now: Starting connection with method %d...\n", dcnow_conn_choice);
+                /* User selected a connection method - queue cooldown-aware connect */
+                DCNOW_DPRINTF("DC Now: Starting connection with method %d...\n", dcnow_conn_choice);
                 dcnow_is_connecting = true;
+                dcnow_connect_cooldown_pending = true;
+                dcnow_pending_method = dcnow_conn_choice == 0 ? DCNOW_CONN_SERIAL : DCNOW_CONN_MODEM;
                 dcnow_connect_anim_frame = 0;
                 connection_status[0] = '\0';
                 dcnow_view = DCNOW_VIEW_GAMES;  /* switch to games view so popup shows status */
-
-#ifdef DCNOW_ASYNC
-                /* Async: start worker thread, return immediately */
-                dcnow_worker_start_connect(&dcnow_worker_ctx,
-                    dcnow_conn_choice == 0 ? DCNOW_CONN_SERIAL : DCNOW_CONN_MODEM);
-#else
-                /* Sync: block until connection completes */
-                dcnow_set_status_callback(dcnow_connection_status_callback);
-                int net_result = dcnow_net_init_with_method(
-                    dcnow_conn_choice == 0 ? DCNOW_CONN_SERIAL : DCNOW_CONN_MODEM);
-                dcnow_set_status_callback(NULL);
-                dcnow_is_connecting = false;
-                connection_status[0] = '\0';
-
-                if (net_result < 0) {
-                    printf("DC Now: Connection failed: %d\n", net_result);
-                    memset(&dcnow_data, 0, sizeof(dcnow_data));
-                    snprintf(dcnow_data.error_message, sizeof(dcnow_data.error_message),
-                            "Connection failed (error %d). Press A to retry", net_result);
-                    dcnow_data.data_valid = false;
-                } else {
-                    printf("DC Now: Connection successful, starting fetch\n");
-                    dcnow_net_initialized = true;
-                    memset(&dcnow_data, 0, sizeof(dcnow_data));
-                    dcnow_data.data_valid = false;
-
-                    /* Auto-start data fetch */
-                    dcnow_data_fetched = false;
-                    dcnow_is_loading = true;
-                    dcnow_choice = 0;
-                    dcnow_scroll_offset = 0;
-                    dcnow_needs_fetch = true;
-                }
-#endif
                 if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
             } else if (!dcnow_data.data_valid) {
                 /* Fetch initial data */
-                printf("DC Now: Requesting initial fetch...\n");
+                DCNOW_DPRINTF("DC Now: Requesting initial fetch...\n");
                 dcnow_data_fetched = false;
                 dcnow_is_loading = true;
                 dcnow_choice = 0;
@@ -311,19 +312,19 @@ handle_input_dcnow(enum control input) {
                 dcnow_view = DCNOW_VIEW_PLAYERS;
                 dcnow_choice = 0;
                 dcnow_scroll_offset = 0;
-                printf("DC Now: Drilling down - game_idx=%d, view now=%d (1=PLAYERS)\n",
+                DCNOW_DPRINTF("DC Now: Drilling down - game_idx=%d, view now=%d (1=PLAYERS)\n",
                        dcnow_selected_game, dcnow_view);
                 /* Set timeout after navigation */
                 if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
             } else {
-                printf("DC Now: A pressed but conditions not met - view=%d, choice=%d, game_count=%d, data_valid=%d\n",
+                DCNOW_DPRINTF("DC Now: A pressed but conditions not met - view=%d, choice=%d, game_count=%d, data_valid=%d\n",
                        dcnow_view, dcnow_choice, dcnow_data.game_count, dcnow_data.data_valid);
             }
         } break;
         case X: {
             /* X button: Refresh data */
             if (dcnow_net_initialized && dcnow_data.data_valid) {
-                printf("DC Now: Requesting refresh...\n");
+                DCNOW_DPRINTF("DC Now: Requesting refresh...\n");
                 dcnow_data_fetched = false;
                 dcnow_data.data_valid = false;
                 dcnow_is_loading = true;
@@ -342,27 +343,38 @@ handle_input_dcnow(enum control input) {
         } break;
         case B: {
             /* B button: Back or Close */
-            printf("DC Now: B pressed, view=%d (0=CONN_SELECT, 1=GAMES, 2=PLAYERS)\n", dcnow_view);
+            DCNOW_DPRINTF("DC Now: B pressed, view=%d (0=CONN_SELECT, 1=GAMES, 2=PLAYERS)\n", dcnow_view);
+            if (dcnow_connect_cooldown_pending) {
+                dcnow_connect_cooldown_pending = false;
+                dcnow_is_connecting = false;
+                connection_status[0] = '\0';
+                if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
+                return;
+            }
 #ifdef DCNOW_ASYNC
             /* Cancel async operation if one is in progress */
             if (dcnow_is_connecting || (dcnow_is_loading && dcnow_worker_is_busy())) {
-                printf("DC Now: Requesting cancellation of async operation\n");
-                dcnow_worker_cancel(&dcnow_worker_ctx);
-                /* Don't close menu yet - let poll detect the cancellation/completion */
+                DCNOW_DPRINTF("DC Now: Requesting cancellation of async operation\n");
+                if (dcnow_worker_is_busy()) {
+                    dcnow_worker_cancel(&dcnow_worker_ctx);
+                }
+                dcnow_connect_cooldown_pending = false;
+                dcnow_is_connecting = false;
+                connection_status[0] = '\0';
                 if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
                 return;
             }
 #endif
             if (dcnow_view == DCNOW_VIEW_CONNECTION_SELECT) {
                 /* Cancel connection selection, go back to games view */
-                printf("DC Now: Canceling connection selection\n");
+                DCNOW_DPRINTF("DC Now: Canceling connection selection\n");
                 dcnow_view = DCNOW_VIEW_GAMES;
                 if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
                 return;
             }
             if (dcnow_view == DCNOW_VIEW_PLAYERS) {
                 /* Go back to game list */
-                printf("DC Now: Going back to game list\n");
+                DCNOW_DPRINTF("DC Now: Going back to game list\n");
                 dcnow_view = DCNOW_VIEW_GAMES;
                 /* Restore previous selection, ensuring it's valid */
                 if (dcnow_selected_game >= 0 && dcnow_selected_game < dcnow_data.game_count) {
@@ -378,7 +390,7 @@ handle_input_dcnow(enum control input) {
                 return;  /* Early return to prevent any further processing */
             }
             /* If we reach here, we're in games view, so close the menu */
-            printf("DC Now: Closing DC Now menu\n");
+            DCNOW_DPRINTF("DC Now: Closing DC Now menu\n");
             *dcnow_state_ptr = DRAW_UI;
             /* Set timeout after closing menu */
             if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
@@ -398,7 +410,7 @@ handle_input_dcnow(enum control input) {
                 if (dcnow_choice < dcnow_scroll_offset) {
                     dcnow_scroll_offset = dcnow_choice;
                 }
-                printf("DC Now: UP - choice=%d, scroll_offset=%d\n", dcnow_choice, dcnow_scroll_offset);
+                DCNOW_DPRINTF("DC Now: UP - choice=%d, scroll_offset=%d\n", dcnow_choice, dcnow_scroll_offset);
                 /* Set timeout after navigation to prevent skipping */
                 if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
             }
@@ -431,7 +443,7 @@ handle_input_dcnow(enum control input) {
                     if (dcnow_scroll_offset < 0) {
                         dcnow_scroll_offset = 0;
                     }
-                    printf("DC Now: DOWN - choice=%d, scroll_offset=%d, max_items=%d\n",
+                    DCNOW_DPRINTF("DC Now: DOWN - choice=%d, scroll_offset=%d, max_items=%d\n",
                            dcnow_choice, dcnow_scroll_offset, max_items);
                     /* Set timeout after navigation to prevent skipping */
                     if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
@@ -443,7 +455,7 @@ handle_input_dcnow(enum control input) {
             /* L+R pressed together: manual refresh (same flow as X) */
             if (INPT_TriggerPressed(TRIGGER_L) && INPT_TriggerPressed(TRIGGER_R)) {
                 if (dcnow_net_initialized && dcnow_data.data_valid) {
-                    printf("DC Now: L+R refresh requested\n");
+                    DCNOW_DPRINTF("DC Now: L+R refresh requested\n");
                     dcnow_data_fetched = false;
                     dcnow_data.data_valid = false;
                     dcnow_is_loading = true;
@@ -463,7 +475,7 @@ handle_input_dcnow(enum control input) {
         case Y: {
             /* Y button: Disconnect from network */
             if (dcnow_net_initialized) {
-                printf("DC Now: Disconnecting...\n");
+                DCNOW_DPRINTF("DC Now: Disconnecting...\n");
                 /* Disconnect modem/network - brief freeze (~700ms) is acceptable */
                 dcnow_net_disconnect();
                 dcnow_net_initialized = false;
@@ -476,7 +488,7 @@ handle_input_dcnow(enum control input) {
                 dcnow_view = DCNOW_VIEW_GAMES;
                 dcnow_choice = 0;
                 dcnow_scroll_offset = 0;
-                printf("DC Now: Disconnected successfully\n");
+                DCNOW_DPRINTF("DC Now: Disconnected successfully\n");
                 if (dcnow_navigate_timeout) *dcnow_navigate_timeout = DCNOW_INPUT_TIMEOUT_INITIAL;
             }
         } break;
@@ -492,6 +504,18 @@ void
 draw_dcnow_tr(void) {
     z_set_cond(205.0f);
 
+    if (dcnow_is_connecting && dcnow_connect_cooldown_pending) {
+        unsigned int remaining_ms = dcnow_net_get_ppp_cooldown_remaining_ms();
+        if (remaining_ms > 0) {
+            unsigned int secs = (remaining_ms + 999) / 1000;
+            snprintf(connection_status, sizeof(connection_status),
+                     "Waiting for DreamPi reset (%us)...", secs);
+        } else {
+            dcnow_connect_cooldown_pending = false;
+            dcnow_start_connect_worker_or_sync();
+        }
+    }
+
 #ifdef DCNOW_ASYNC
     /* Poll async worker thread for connection progress */
     if (dcnow_is_connecting && dcnow_worker_is_busy()) {
@@ -504,7 +528,7 @@ draw_dcnow_tr(void) {
             dcnow_is_connecting = false;
             dcnow_net_initialized = true;
             connection_status[0] = '\0';
-            printf("DC Now: Async connection complete, starting fetch\n");
+            DCNOW_DPRINTF("DC Now: Async connection complete, starting fetch\n");
 
             /* Initialize the network subsystem (socket priming etc) */
             dcnow_init();
@@ -520,9 +544,9 @@ draw_dcnow_tr(void) {
                     "Connection failed (error %d). Press A to retry",
                     dcnow_worker_ctx.error_code);
             dcnow_data.data_valid = false;
-            printf("DC Now: Async connection failed: %d\n", dcnow_worker_ctx.error_code);
+            DCNOW_DPRINTF("DC Now: Async connection failed: %d\n", dcnow_worker_ctx.error_code);
         }
-    } else if (dcnow_is_connecting && !dcnow_worker_is_busy()) {
+    } else if (dcnow_is_connecting && !dcnow_connect_cooldown_pending && !dcnow_worker_is_busy()) {
         /* Worker finished between frames - catch up */
         dcnow_worker_poll(&dcnow_worker_ctx);
         dcnow_is_connecting = false;
@@ -540,10 +564,10 @@ draw_dcnow_tr(void) {
             dcnow_data_fetched = true;
             dcnow_vmu_update_display(&dcnow_data);
             dcnow_last_fetch_ms = timer_ms_gettime64();
-            printf("DC Now: Async fetch complete\n");
+            DCNOW_DPRINTF("DC Now: Async fetch complete\n");
         } else if (state == DCNOW_WORKER_ERROR) {
             dcnow_is_loading = false;
-            printf("DC Now: Async fetch failed: %d\n", dcnow_worker_ctx.error_code);
+            DCNOW_DPRINTF("DC Now: Async fetch failed: %d\n", dcnow_worker_ctx.error_code);
         }
     } else if (dcnow_is_loading && !dcnow_worker_is_busy() && !dcnow_needs_fetch) {
         /* Worker finished between frames - catch up */
@@ -555,7 +579,7 @@ draw_dcnow_tr(void) {
 #ifndef DCNOW_ASYNC
     if (dcnow_needs_fetch && dcnow_shown_loading) {
         dcnow_needs_fetch = false;
-        printf("DC Now: Fetching data...\n");
+        DCNOW_DPRINTF("DC Now: Fetching data...\n");
 
         /* Show VMU refresh indicator while we block on the network */
         dcnow_vmu_show_refreshing();
@@ -565,9 +589,9 @@ draw_dcnow_tr(void) {
             dcnow_data_fetched = true;
             dcnow_vmu_update_display(&dcnow_data);
             dcnow_last_fetch_ms = timer_ms_gettime64();
-            printf("DC Now: Data refreshed successfully\n");
+            DCNOW_DPRINTF("DC Now: Data refreshed successfully\n");
         } else {
-            printf("DC Now: Data refresh failed: %d\n", result);
+            DCNOW_DPRINTF("DC Now: Data refresh failed: %d\n", result);
         }
 
         dcnow_is_loading = false;
@@ -577,18 +601,18 @@ draw_dcnow_tr(void) {
     if (dcnow_net_initialized && dcnow_data.data_valid && !dcnow_is_loading && dcnow_last_fetch_ms > 0) {
         uint64_t now = timer_ms_gettime64();
         if ((now - dcnow_last_fetch_ms) >= DCNOW_AUTO_REFRESH_MS) {
-            printf("DC Now: Auto-refresh triggered\n");
+            DCNOW_DPRINTF("DC Now: Auto-refresh triggered\n");
             dcnow_vmu_show_refreshing();
 
             int result = dcnow_fetch_data(&dcnow_temp_data, 5000);
             if (result == 0) {
                 memcpy(&dcnow_data, &dcnow_temp_data, sizeof(dcnow_data));
                 dcnow_vmu_update_display(&dcnow_data);
-                printf("DC Now: Auto-refresh completed successfully\n");
+                DCNOW_DPRINTF("DC Now: Auto-refresh completed successfully\n");
             } else {
                 /* Fetch failed — keep old data, restore old VMU display */
                 dcnow_vmu_update_display(&dcnow_data);
-                printf("DC Now: Auto-refresh failed: %d\n", result);
+                DCNOW_DPRINTF("DC Now: Auto-refresh failed: %d\n", result);
             }
             dcnow_last_fetch_ms = timer_ms_gettime64();
         }
@@ -817,20 +841,20 @@ draw_dcnow_tr(void) {
                     if (dcnow_data.games[game_idx].game_code[0] != '\0') {
                         /* Map API code to product ID */
                         const char* product_id = get_product_id_from_api_code(dcnow_data.games[game_idx].game_code);
-                        printf("DC Now UI: API code '%s' -> product ID '%s'\n",
+                        DCNOW_DPRINTF("DC Now UI: API code '%s' -> product ID '%s'\n",
                                dcnow_data.games[game_idx].game_code, product_id);
 
                         if (product_id && txr_get_small(product_id, &game_icon) == 0) {
                             /* Check if we got a real texture or just the empty placeholder */
                             if (game_icon.texture != img_empty_boxart.texture) {
                                 has_icon = true;
-                                printf("DC Now UI: Found texture for '%s'\n", product_id);
+                                DCNOW_DPRINTF("DC Now UI: Found texture for '%s'\n", product_id);
                             } else {
-                                printf("DC Now UI: No texture found for '%s'\n", product_id);
+                                DCNOW_DPRINTF("DC Now UI: No texture found for '%s'\n", product_id);
                             }
                         }
                     } else {
-                        printf("DC Now UI: Game %d has empty code\n", game_idx);
+                        DCNOW_DPRINTF("DC Now UI: Game %d has empty code\n", game_idx);
                     }
 
                     /* Draw box art icon if available (28x28 pixels) */
@@ -1376,11 +1400,11 @@ dcnow_background_tick(void) {
         if (state == DCNOW_WORKER_DONE) {
             memcpy(&dcnow_data, &dcnow_worker_ctx.result_data, sizeof(dcnow_data));
             dcnow_vmu_update_display(&dcnow_data);
-            printf("DC Now: Async background refresh completed\n");
+            DCNOW_DPRINTF("DC Now: Async background refresh completed\n");
         } else if (state == DCNOW_WORKER_ERROR) {
             /* Keep old data, restore old VMU display */
             dcnow_vmu_update_display(&dcnow_data);
-            printf("DC Now: Async background refresh failed: %d\n", dcnow_worker_ctx.error_code);
+            DCNOW_DPRINTF("DC Now: Async background refresh failed: %d\n", dcnow_worker_ctx.error_code);
         }
         dcnow_bg_fetch_active = false;
         dcnow_last_fetch_ms = timer_ms_gettime64();
@@ -1411,7 +1435,7 @@ dcnow_background_tick(void) {
     }
 
     /* Time to refresh! */
-    printf("DC Now: Background auto-refresh triggered\n");
+    DCNOW_DPRINTF("DC Now: Background auto-refresh triggered\n");
     dcnow_vmu_show_refreshing();
 
 #ifdef DCNOW_ASYNC
@@ -1420,18 +1444,18 @@ dcnow_background_tick(void) {
         dcnow_bg_fetch_active = true;
     } else {
         /* Worker busy, try again next tick */
-        printf("DC Now: Background refresh deferred - worker busy\n");
+        DCNOW_DPRINTF("DC Now: Background refresh deferred - worker busy\n");
     }
 #else
     int result = dcnow_fetch_data(&dcnow_temp_data, 5000);
     if (result == 0) {
         memcpy(&dcnow_data, &dcnow_temp_data, sizeof(dcnow_data));
         dcnow_vmu_update_display(&dcnow_data);
-        printf("DC Now: Background auto-refresh completed successfully\n");
+        DCNOW_DPRINTF("DC Now: Background auto-refresh completed successfully\n");
     } else {
         /* Fetch failed — keep old data, restore old VMU display */
         dcnow_vmu_update_display(&dcnow_data);
-        printf("DC Now: Background auto-refresh failed: %d\n", result);
+        DCNOW_DPRINTF("DC Now: Background auto-refresh failed: %d\n", result);
     }
     dcnow_last_fetch_ms = timer_ms_gettime64();
 #endif

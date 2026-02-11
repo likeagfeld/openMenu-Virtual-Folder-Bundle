@@ -1,6 +1,7 @@
 #include "dcnow_api.h"
 #include "dcnow_json.h"
 #include "dcnow_vmu.h"
+#include "dcnow_net_init.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,20 +34,20 @@ int dcnow_init(void) {
 
     /* Verify network device exists */
     if (!net_default_dev) {
-        printf("DC Now: ERROR - No network device (net_default_dev is NULL)\n");
+        DCNOW_DPRINTF("DC Now: ERROR - No network device (net_default_dev is NULL)\n");
         return -1;
     }
 
-    printf("DC Now: Found network device: %s\n", net_default_dev->name);
+    DCNOW_DPRINTF("DC Now: Found network device: %s\n", net_default_dev->name);
 
     /* Verify we have an IP address */
     if (net_default_dev->ip_addr[0] == 0 && net_default_dev->ip_addr[1] == 0 &&
         net_default_dev->ip_addr[2] == 0 && net_default_dev->ip_addr[3] == 0) {
-        printf("DC Now: ERROR - No IP address assigned\n");
+        DCNOW_DPRINTF("DC Now: ERROR - No IP address assigned\n");
         return -2;
     }
 
-    printf("DC Now: IP address: %d.%d.%d.%d\n",
+    DCNOW_DPRINTF("DC Now: IP address: %d.%d.%d.%d\n",
            net_default_dev->ip_addr[0],
            net_default_dev->ip_addr[1],
            net_default_dev->ip_addr[2],
@@ -54,18 +55,18 @@ int dcnow_init(void) {
 
     /* Identify connection type */
     if (strncmp(net_default_dev->name, "ppp", 3) == 0) {
-        printf("DC Now: Using PPP (DreamPi/Modem)\n");
+        DCNOW_DPRINTF("DC Now: Using PPP (DreamPi/Modem)\n");
     } else if (strncmp(net_default_dev->name, "bba", 3) == 0) {
-        printf("DC Now: Using BBA (Broadband Adapter)\n");
+        DCNOW_DPRINTF("DC Now: Using BBA (Broadband Adapter)\n");
     } else {
-        printf("DC Now: Using %s\n", net_default_dev->name);
+        DCNOW_DPRINTF("DC Now: Using %s\n", net_default_dev->name);
     }
 
     /* Note: The UI layer handles the initial 10-second delay with visual feedback */
     /* Now retry socket creation with additional delays if needed */
 
     /* Try to "prime" the socket layer with retry logic */
-    printf("DC Now: Priming socket layer with retries...\n");
+    DCNOW_DPRINTF("DC Now: Priming socket layer with retries...\n");
     int test_sock = -1;
     int retry_count = 0;
     int max_retries = 5;
@@ -73,24 +74,24 @@ int dcnow_init(void) {
     for (retry_count = 0; retry_count < max_retries; retry_count++) {
         test_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (test_sock >= 0) {
-            printf("DC Now: Test socket created successfully on attempt %d (fd=%d)\n", retry_count + 1, test_sock);
+            DCNOW_DPRINTF("DC Now: Test socket created successfully on attempt %d (fd=%d)\n", retry_count + 1, test_sock);
             close(test_sock);
-            printf("DC Now: Test socket closed\n");
+            DCNOW_DPRINTF("DC Now: Test socket closed\n");
             break;
         } else {
-            printf("DC Now: Test socket attempt %d failed with errno=%d\n", retry_count + 1, errno);
+            DCNOW_DPRINTF("DC Now: Test socket attempt %d failed with errno=%d\n", retry_count + 1, errno);
             if (retry_count < max_retries - 1) {
-                printf("DC Now: Waiting 2 seconds before retry...\n");
+                DCNOW_DPRINTF("DC Now: Waiting 2 seconds before retry...\n");
                 thd_sleep(2000);  /* Wait 2 seconds between retries */
             }
         }
     }
 
     if (test_sock < 0) {
-        printf("DC Now: WARNING - All socket priming attempts failed, but continuing...\n");
+        DCNOW_DPRINTF("DC Now: WARNING - All socket priming attempts failed, but continuing...\n");
     }
 
-    printf("DC Now: Ready to create sockets\n");
+    DCNOW_DPRINTF("DC Now: Ready to create sockets\n");
     network_initialized = true;
     return 0;
 #else
@@ -119,47 +120,47 @@ static int http_get_request(const char* hostname, const char* path, char* respon
 
     /* Verify network is still available */
     if (!net_default_dev) {
-        printf("DC Now: ERROR - Network device disappeared\n");
+        DCNOW_DPRINTF("DC Now: ERROR - Network device disappeared\n");
         return -2;
     }
 
-    printf("DC Now: net_default_dev = %p\n", (void*)net_default_dev);
-    printf("DC Now: Device name: %s\n", net_default_dev->name);
-    printf("DC Now: IP: %d.%d.%d.%d\n",
+    DCNOW_DPRINTF("DC Now: net_default_dev = %p\n", (void*)net_default_dev);
+    DCNOW_DPRINTF("DC Now: Device name: %s\n", net_default_dev->name);
+    DCNOW_DPRINTF("DC Now: IP: %d.%d.%d.%d\n",
            net_default_dev->ip_addr[0], net_default_dev->ip_addr[1],
            net_default_dev->ip_addr[2], net_default_dev->ip_addr[3]);
-    printf("DC Now: DNS: %d.%d.%d.%d\n",
+    DCNOW_DPRINTF("DC Now: DNS: %d.%d.%d.%d\n",
            net_default_dev->dns[0], net_default_dev->dns[1],
            net_default_dev->dns[2], net_default_dev->dns[3]);
 
     /* Create socket - Try protocol 0 first, then IPPROTO_TCP */
-    printf("DC Now: Attempting socket(AF_INET, SOCK_STREAM, 0)...\n");
+    DCNOW_DPRINTF("DC Now: Attempting socket(AF_INET, SOCK_STREAM, 0)...\n");
     sock = socket(AF_INET, SOCK_STREAM, 0);
 
     if (sock < 0) {
-        printf("DC Now: Protocol 0 failed (errno=%d), trying IPPROTO_TCP...\n", errno);
+        DCNOW_DPRINTF("DC Now: Protocol 0 failed (errno=%d), trying IPPROTO_TCP...\n", errno);
         sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     }
 
     if (sock < 0) {
         last_socket_errno = errno;
-        printf("DC Now: ERROR - socket() failed, errno=%d\n", errno);
+        DCNOW_DPRINTF("DC Now: ERROR - socket() failed, errno=%d\n", errno);
         switch (errno) {
-            case EIO: printf("DC Now: I/O error\n"); break;
-            case EPROTONOSUPPORT: printf("DC Now: Protocol not supported\n"); break;
-            case EMFILE: printf("DC Now: Too many open files\n"); break;
-            case ENFILE: printf("DC Now: System file table full\n"); break;
-            case EACCES: printf("DC Now: Permission denied\n"); break;
-            case ENOBUFS: printf("DC Now: No buffer space available\n"); break;
-            case ENOMEM: printf("DC Now: Out of memory\n"); break;
-            default: printf("DC Now: Unknown socket error\n"); break;
+            case EIO: DCNOW_DPRINTF("DC Now: I/O error\n"); break;
+            case EPROTONOSUPPORT: DCNOW_DPRINTF("DC Now: Protocol not supported\n"); break;
+            case EMFILE: DCNOW_DPRINTF("DC Now: Too many open files\n"); break;
+            case ENFILE: DCNOW_DPRINTF("DC Now: System file table full\n"); break;
+            case EACCES: DCNOW_DPRINTF("DC Now: Permission denied\n"); break;
+            case ENOBUFS: DCNOW_DPRINTF("DC Now: No buffer space available\n"); break;
+            case ENOMEM: DCNOW_DPRINTF("DC Now: Out of memory\n"); break;
+            default: DCNOW_DPRINTF("DC Now: Unknown socket error\n"); break;
         }
         return -2;
     }
 
     last_socket_errno = 0;  /* Clear errno on success */
 
-    printf("DC Now: Socket created successfully (fd=%d)\n", sock);
+    DCNOW_DPRINTF("DC Now: Socket created successfully (fd=%d)\n", sock);
 
     /* Log success to SD card */
     logfile = fopen("/ram/DCNOW_LOG.TXT", "a");
@@ -169,16 +170,16 @@ static int http_get_request(const char* hostname, const char* path, char* respon
     }
 
     /* Resolve hostname */
-    printf("DC Now: Resolving %s...\n", hostname);
+    DCNOW_DPRINTF("DC Now: Resolving %s...\n", hostname);
     dcnow_vmu_show_refreshing();  /* Update spinner before DNS lookup */
     host = gethostbyname(hostname);
     if (!host) {
-        printf("DC Now: DNS lookup failed for %s\n", hostname);
+        DCNOW_DPRINTF("DC Now: DNS lookup failed for %s\n", hostname);
         close(sock);
         return -3;  /* DNS resolution failed */
     }
 
-    printf("DC Now: Resolved to %s\n", inet_ntoa(*(struct in_addr*)host->h_addr));
+    DCNOW_DPRINTF("DC Now: Resolved to %s\n", inet_ntoa(*(struct in_addr*)host->h_addr));
     dcnow_vmu_show_refreshing();  /* Update spinner after DNS */
 
     /* Setup server address */
@@ -188,7 +189,7 @@ static int http_get_request(const char* hostname, const char* path, char* respon
     memcpy(&server_addr.sin_addr, host->h_addr, host->h_length);
 
     /* Connect to server */
-    printf("DC Now: Connecting...\n");
+    DCNOW_DPRINTF("DC Now: Connecting...\n");
     dcnow_vmu_show_refreshing();  /* Update spinner before connect */
     start_time = timer_ms_gettime64();
     timeout_ticks = timeout_ms;
@@ -197,12 +198,12 @@ static int http_get_request(const char* hostname, const char* path, char* respon
 
     if (connect_result < 0) {
         /* For blocking sockets, connect should succeed or fail immediately on Dreamcast */
-        printf("DC Now: Connection failed (errno: %d)\n", errno);
+        DCNOW_DPRINTF("DC Now: Connection failed (errno: %d)\n", errno);
         close(sock);
         return -4;
     }
 
-    printf("DC Now: Connected\n");
+    DCNOW_DPRINTF("DC Now: Connected\n");
     dcnow_vmu_show_refreshing();  /* Update spinner after connect */
 
     /* Build HTTP GET request */
@@ -216,15 +217,15 @@ static int http_get_request(const char* hostname, const char* path, char* respon
              path, hostname);
 
     /* Send request */
-    printf("DC Now: Sending request...\n");
+    DCNOW_DPRINTF("DC Now: Sending request...\n");
     int sent = send(sock, request_buf, strlen(request_buf), 0);
     if (sent <= 0) {
-        printf("DC Now: Send failed (errno: %d)\n", errno);
+        DCNOW_DPRINTF("DC Now: Send failed (errno: %d)\n", errno);
         close(sock);
         return -5;  /* Send failed */
     }
 
-    printf("DC Now: Request sent, waiting for response...\n");
+    DCNOW_DPRINTF("DC Now: Request sent, waiting for response...\n");
 
     /* Receive response */
     start_time = timer_ms_gettime64();
@@ -233,7 +234,7 @@ static int http_get_request(const char* hostname, const char* path, char* respon
 
     while (total_received < buf_size - 1) {
         if (timer_ms_gettime64() - start_time > timeout_ticks) {
-            printf("DC Now: Receive timeout\n");
+            DCNOW_DPRINTF("DC Now: Receive timeout\n");
             break;  /* Timeout - but we may have received some data */
         }
 
@@ -252,12 +253,12 @@ static int http_get_request(const char* hostname, const char* path, char* respon
             start_time = timer_ms_gettime64();  /* Reset timeout on successful receive */
         } else if (received == 0) {
             /* Connection closed by server - this is normal */
-            printf("DC Now: Server closed connection\n");
+            DCNOW_DPRINTF("DC Now: Server closed connection\n");
             break;
         } else {
             /* Error receiving */
             if (total_received == 0) {
-                printf("DC Now: Receive failed (errno: %d)\n", errno);
+                DCNOW_DPRINTF("DC Now: Receive failed (errno: %d)\n", errno);
                 close(sock);
                 return -6;  /* Receive failed */
             }
@@ -270,7 +271,7 @@ static int http_get_request(const char* hostname, const char* path, char* respon
     response_buf[total_received] = '\0';
     close(sock);
 
-    printf("DC Now: Received %d bytes\n", total_received);
+    DCNOW_DPRINTF("DC Now: Received %d bytes\n", total_received);
 
     return (total_received > 0) ? total_received : -6;
 }
@@ -303,8 +304,8 @@ int dcnow_fetch_data(dcnow_data_t *data, uint32_t timeout_ms) {
     char response[8192];
     int result;
 
-    printf("DC Now: Fetching data from dreamcast.online/now/api/users.json...\n");
-    printf("DC Now: Using device %s, IP %d.%d.%d.%d\n",
+    DCNOW_DPRINTF("DC Now: Fetching data from dreamcast.online/now/api/users.json...\n");
+    DCNOW_DPRINTF("DC Now: Using device %s, IP %d.%d.%d.%d\n",
            net_default_dev->name,
            net_default_dev->ip_addr[0],
            net_default_dev->ip_addr[1],
@@ -353,7 +354,7 @@ int dcnow_fetch_data(dcnow_data_t *data, uint32_t timeout_ms) {
             snprintf(data->error_message, sizeof(data->error_message),
                     "%s (err %d)", error_msg, result);
         }
-        printf("DC Now: Error - %s\n", data->error_message);
+        DCNOW_DPRINTF("DC Now: Error - %s\n", data->error_message);
         data->data_valid = false;
         return result;
     }
@@ -363,15 +364,15 @@ int dcnow_fetch_data(dcnow_data_t *data, uint32_t timeout_ms) {
     if (!json_start) {
         strcpy(data->error_message, "Invalid HTTP response");
         data->data_valid = false;
-        printf("DC Now: Invalid HTTP response\n");
+        DCNOW_DPRINTF("DC Now: Invalid HTTP response\n");
         return -7;
     }
     json_start += 4;  /* Skip the \r\n\r\n */
 
     /* DEBUG: Print the actual JSON we received */
-    printf("DC Now: ========== RAW JSON START ==========\n");
-    printf("%s\n", json_start);
-    printf("DC Now: ========== RAW JSON END ==========\n");
+    DCNOW_DPRINTF("DC Now: ========== RAW JSON START ==========\n");
+    DCNOW_DPRINTF("%s\n", json_start);
+    DCNOW_DPRINTF("DC Now: ========== RAW JSON END ==========\n");
 
     /* Check for HTTP error status */
     if (strncmp(response, "HTTP/1.", 7) == 0) {
@@ -385,31 +386,31 @@ int dcnow_fetch_data(dcnow_data_t *data, uint32_t timeout_ms) {
                 snprintf(data->error_message, sizeof(data->error_message),
                         "HTTP error %d", status_code);
                 data->data_valid = false;
-                printf("DC Now: HTTP error %d\n", status_code);
+                DCNOW_DPRINTF("DC Now: HTTP error %d\n", status_code);
                 return -8;
             }
         }
     }
 
-    printf("DC Now: Parsing JSON...\n");
+    DCNOW_DPRINTF("DC Now: Parsing JSON...\n");
 
     /* Parse JSON */
     json_dcnow_t json_result;
     if (!dcnow_json_parse(json_start, &json_result)) {
         strcpy(data->error_message, "JSON parse error");
         data->data_valid = false;
-        printf("DC Now: JSON parse failed\n");
+        DCNOW_DPRINTF("DC Now: JSON parse failed\n");
         return -9;
     }
 
     if (!json_result.valid) {
         strcpy(data->error_message, "Invalid JSON data");
         data->data_valid = false;
-        printf("DC Now: Invalid JSON data\n");
+        DCNOW_DPRINTF("DC Now: Invalid JSON data\n");
         return -10;
     }
 
-    printf("DC Now: Successfully parsed %d games, %d total players\n",
+    DCNOW_DPRINTF("DC Now: Successfully parsed %d games, %d total players\n",
            json_result.game_count, json_result.total_players);
 
     /* Copy parsed data to result structure */
@@ -431,7 +432,7 @@ int dcnow_fetch_data(dcnow_data_t *data, uint32_t timeout_ms) {
             memcpy(&data->games[i].player_details[j], &json_result.games[i].player_details[j], sizeof(json_player_details_t));
         }
 
-        printf("DC Now:   %s (%s) - %d players\n",
+        DCNOW_DPRINTF("DC Now:   %s (%s) - %d players\n",
                data->games[i].game_name, data->games[i].game_code, data->games[i].player_count);
     }
 
@@ -442,7 +443,7 @@ int dcnow_fetch_data(dcnow_data_t *data, uint32_t timeout_ms) {
     memcpy(&cached_data, data, sizeof(dcnow_data_t));
     cache_valid = true;
 
-    printf("DC Now: Data fetch complete\n");
+    DCNOW_DPRINTF("DC Now: Data fetch complete\n");
     return 0;
 
 #else
