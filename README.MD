@@ -31,7 +31,7 @@ A: Details
 
 Note: The data is automatically cached after the first fetch to reduce network calls. Manual or auto refresh with the latest player counts.
 
-SPECIAL THANKS TO KAZADE FOR THEIR AMAZING DREAMCAST NOW! IMPLEMENTATION FOR WHICH THIS WOULD NOT BE POSSIBLE WITHOUT ;)
+SPECIAL THANKS TO KAZADE FOR THEIR AMAZING DREAMCAST NOW! IMPLEMENTATION FOR WHICH THIS WOULD NOT BE POSSIBLE WITHOUT - AND TO ATEAM FOR LEADING THE CHARGE IN NEXT-GEN OPENMENU DESIGN! ;)
 
 Additional thanks to Julian for their support in feature development and QA
 
