@@ -16,13 +16,16 @@
 /* Serial coders cable connection state */
 static int serial_connection_active = 0;
 
-/* When non-zero, SCIF is being used for serial data (AT commands or PPP).
+/* When non-zero, SCIF is being used (or was used) for serial data.
  * ALL printf() calls must be suppressed because KOS routes printf through
  * SCIF, which would inject debug text into the serial data stream and
  * corrupt communication with DreamPi.
  *
- * This flag is set before SCIF baud rate changes and cleared only after
- * SCIF is fully restored to 57600 debug mode on disconnect/failure. */
+ * This flag is set before SCIF baud rate changes on first serial connection
+ * and intentionally NEVER cleared back to 0 afterward. After disconnect,
+ * SCIF stays at 115200 to match DreamPi's listening rate — restoring to
+ * 57600 would cause printf output at the wrong baud rate, filling DreamPi's
+ * buffer with garbage and preventing reconnection. */
 static int scif_in_use_for_data = 0;
 
 #ifdef _arch_dreamcast
@@ -207,16 +210,10 @@ static int try_serial_coders_cable(void) {
     }
 
     if (!got_ok) {
-        /* All AT retries exhausted */
+        /* All AT retries exhausted - leave SCIF at 115200 for retry */
         serial_log("All AT retries failed - no DreamPi detected");
 
-        /* Restore SCIF to default state for KOS debug output */
-        scif_set_parameters(57600, 1);
-        scif_set_irq_usage(1);  /* Re-enable IRQ mode */
-        timer_spin_sleep(100);
-        scif_in_use_for_data = 0;  /* Safe to printf again */
-
-        /* Now we can show status on screen (printf will work again) */
+        /* Show status on screen (via callback, printf suppressed) */
         char status_msg[80];
         snprintf(status_msg, sizeof(status_msg), "No OK after %d tries - got: %.20s", AT_MAX_RETRIES, buf);
         update_status(status_msg);
@@ -264,13 +261,7 @@ static int try_serial_coders_cable(void) {
         snprintf(log_msg, sizeof(log_msg), "No CONNECT - got: %.30s", buf);
         serial_log(log_msg);
 
-        /* Restore SCIF to default state */
-        scif_set_parameters(57600, 1);
-        scif_set_irq_usage(1);
-        timer_spin_sleep(100);
-        scif_in_use_for_data = 0;  /* Safe to printf again */
-
-        /* Now show status on screen */
+        /* Leave SCIF at 115200 for retry - show status via callback */
         char status_msg[80];
         snprintf(status_msg, sizeof(status_msg), "No CONNECT - got: %.30s", buf);
         update_status(status_msg);
@@ -288,10 +279,6 @@ static int try_serial_coders_cable(void) {
     /* Initialize PPP subsystem */
     if (ppp_init() < 0) {
         update_status("PPP init failed!");
-        scif_set_parameters(57600, 1);
-        scif_set_irq_usage(1);
-        timer_spin_sleep(100);
-        scif_in_use_for_data = 0;
         return -3;
     }
 
@@ -303,10 +290,6 @@ static int try_serial_coders_cable(void) {
         snprintf(log_msg, sizeof(log_msg), "ppp_scif_init failed: %d", err);
         serial_log(log_msg);
         ppp_shutdown();
-        scif_set_parameters(57600, 1);
-        scif_set_irq_usage(1);
-        timer_spin_sleep(100);
-        scif_in_use_for_data = 0;
 
         char status_msg[80];
         snprintf(status_msg, sizeof(status_msg), "ppp_scif_init failed: %d", err);
@@ -319,10 +302,6 @@ static int try_serial_coders_cable(void) {
     if (ppp_set_login("dream", "dreamcast") < 0) {
         update_status("Login setup failed!");
         ppp_shutdown();
-        scif_set_parameters(57600, 1);
-        scif_set_irq_usage(1);
-        timer_spin_sleep(100);
-        scif_in_use_for_data = 0;
         return -5;
     }
 
@@ -334,10 +313,6 @@ static int try_serial_coders_cable(void) {
         snprintf(log_msg, sizeof(log_msg), "ppp_connect failed: %d", err);
         serial_log(log_msg);
         ppp_shutdown();
-        scif_set_parameters(57600, 1);
-        scif_set_irq_usage(1);
-        timer_spin_sleep(100);
-        scif_in_use_for_data = 0;
 
         char status_msg[80];
         snprintf(status_msg, sizeof(status_msg), "ppp_connect failed: %d", err);
@@ -349,8 +324,7 @@ static int try_serial_coders_cable(void) {
     update_status("Connected via serial!");
     serial_connection_active = 1;
     /* scif_in_use_for_data remains 1 — SCIF is now owned by PPP.
-     * It will be cleared in dcnow_net_disconnect() when PPP is shut down
-     * and SCIF is restored to 57600 debug mode. */
+     * It stays 1 even after disconnect to prevent printf at wrong baud rate. */
     serial_log("Serial coders cable connection established!");
     return 0;
 
@@ -484,16 +458,12 @@ void dcnow_net_disconnect(void) {
 
     /* Check if we have a network device */
     if (!net_default_dev) {
+        /* Leave SCIF state as-is (don't restore to 57600) so reconnect works.
+         * Just clear connection flag if needed. */
         serial_log("No network device to disconnect");
-        /* Ensure SCIF flag is cleared even if state is inconsistent */
         if (scif_in_use_for_data) {
-            scif_set_parameters(57600, 1);
-            scif_set_irq_usage(1);
-            timer_spin_sleep(100);
-            scif_in_use_for_data = 0;
             serial_connection_active = 0;
         }
-        printf("DC Now: No network device to disconnect\n");
         return;
     }
 
@@ -506,32 +476,28 @@ void dcnow_net_disconnect(void) {
         timer_spin_sleep(200);
 
         if (serial_connection_active) {
-            /* Serial coders cable - restore SCIF to debug mode.
-             * This is critical for reconnection: without restoring SCIF,
-             * the port remains in whatever state PPP left it in, and
-             * subsequent AT commands will fail or produce garbage. */
-            serial_log("Serial PPP disconnected, restoring SCIF...");
+            /* Serial coders cable - do NOT restore SCIF to 57600 debug mode.
+             * After PPP at 115200, DreamPi is listening at 115200. If we
+             * switched SCIF to 57600 here, any printf output between disconnect
+             * and reconnect would be sent at 57600, which DreamPi receives as
+             * garbage at 115200. This fills DreamPi's serial buffer with noise,
+             * preventing it from detecting the next "AT" command on reconnect.
+             *
+             * Instead, leave SCIF at 115200 with IRQs disabled (as PPP left it)
+             * and keep scif_in_use_for_data = 1 to suppress DC Now printf.
+             * try_serial_coders_cable() will fully reinitialize SCIF on reconnect. */
+            serial_log("Serial PPP disconnected");
 
-            /* Drain any leftover data in SCIF buffers */
-            timer_spin_sleep(200);
+            /* Drain any leftover PPP data from SCIF buffers */
+            timer_spin_sleep(500);
             while (scif_read() != -1) { /* drain buffer */ }
-            timer_spin_sleep(100);
+            timer_spin_sleep(200);
             while (scif_read() != -1) { /* drain again */ }
 
-            /* Reinitialize SCIF and restore to KOS debug defaults */
-            scif_init();
-            scif_set_parameters(57600, 1);  /* Restore 57600 baud for debug */
-            scif_set_irq_usage(1);           /* Re-enable IRQ mode for KOS */
-            timer_spin_sleep(200);
-
-            /* Drain once more after reinit */
-            while (scif_read() != -1) { /* drain buffer */ }
-
             serial_connection_active = 0;
-            scif_in_use_for_data = 0;  /* SCIF is now safe for printf again */
+            /* scif_in_use_for_data stays 1 — prevents printf through SCIF */
 
-            serial_log("SCIF restored to 57600 debug mode");
-            printf("DC Now: Serial PPP disconnected, SCIF restored\n");
+            serial_log("Serial disconnected, SCIF left at 115200 for reconnect");
         } else {
             /* Modem connection - shutdown modem hardware */
             serial_log("Shutting down modem hardware...");
@@ -546,7 +512,7 @@ void dcnow_net_disconnect(void) {
 
         /* Reset network state to NULL so future init knows to reinitialize */
         net_default_dev = NULL;
-        printf("DC Now: Network state reset to NULL\n");
+        serial_log("Network state reset to NULL");
     } else {
         /* BBA doesn't need special disconnect handling */
         printf("DC Now: Network device is not modem (BBA), no disconnect needed\n");
