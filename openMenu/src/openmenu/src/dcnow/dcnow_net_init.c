@@ -68,6 +68,25 @@ void dcnow_set_status_sleep_enabled(bool enabled) {
     status_sleep_enabled = enabled;
 }
 
+#ifdef _arch_dreamcast
+/* Force PPP to fully release SCIF ownership/callbacks.
+ * Some reconnect failures happen when PPP shutdown appears complete but SCIF RX
+ * callbacks still consume incoming bytes before scif_read() polling sees them.
+ * A quick init->shutdown cycle mirrors the deeper reset effect seen after a
+ * successful modem connect/disconnect path. */
+static void ppp_force_release_scif(void) {
+    ppp_shutdown();
+    timer_spin_sleep(120);
+
+    if (ppp_init() >= 0) {
+        timer_spin_sleep(40);
+        ppp_shutdown();
+    }
+
+    timer_spin_sleep(240);
+}
+#endif
+
 static void update_status(const char* message) {
     /* Only printf when SCIF is NOT in use for serial data.
      * When SCIF is active, printf would send debug text through the serial
@@ -164,8 +183,8 @@ static int try_serial_coders_cable(void) {
          * is safe (no-op if already shut down) and ensures SCIF is released.
          * A full DC reboot works because it power-cycles SCIF hardware and
          * clears all PPP state from memory — this replicates that cleanup. */
-        ppp_shutdown();
-        timer_spin_sleep(pass == 0 ? 200 : 800);
+        ppp_force_release_scif();
+        timer_spin_sleep(pass == 0 ? 140 : 500);
 
         /* Initialize SCIF hardware - required before setting parameters */
         scif_init();
@@ -534,10 +553,7 @@ void dcnow_net_disconnect(void) {
     /* Check if it's a PPP connection (modem or serial) */
     if (strncmp(net_default_dev->name, "ppp", 3) == 0) {
         serial_log("Shutting down PPP connection...");
-        ppp_shutdown();
-
-        /* Give PPP time to fully shut down */
-        timer_spin_sleep(200);
+        ppp_force_release_scif();
 
         if (serial_connection_active) {
             /* Serial coders cable - do NOT restore SCIF to 57600 debug mode.
@@ -552,6 +568,9 @@ void dcnow_net_disconnect(void) {
              * on reconnect. DreamPi needs the "DC Now:" preamble to enter AT mode.
              * try_serial_coders_cable() will fully reinitialize SCIF on reconnect. */
             serial_log("Serial PPP disconnected");
+
+            /* Extra PPP/SCIF detach to mirror modem-cycle reset behavior. */
+            ppp_force_release_scif();
 
             /* Drain any leftover PPP data from SCIF buffers */
             timer_spin_sleep(700);
