@@ -579,9 +579,10 @@ void dcnow_net_disconnect(void) {
     /* Check if it's a PPP connection (modem or serial) */
     if (strncmp(net_default_dev->name, "ppp", 3) == 0) {
         serial_log("Shutting down PPP connection...");
-        ppp_force_release_scif();
 
         if (serial_connection_active) {
+            /* Serial path needs deeper PPP/SCIF detach to avoid reconnect stalls. */
+            ppp_force_release_scif();
             /* Serial coders cable - do NOT restore SCIF to 57600 debug mode.
              * After PPP at 115200, DreamPi is listening at 115200. If we
              * switched SCIF to 57600 here, any printf output between disconnect
@@ -619,7 +620,12 @@ void dcnow_net_disconnect(void) {
 
             serial_log("Serial disconnected, SCIF left at 115200 for reconnect");
         } else {
-            /* Modem connection - shutdown modem hardware */
+            /* Modem connection - use classic teardown path.
+             * Keep this lighter than serial teardown: modem->serial reconnects
+             * were previously stable with plain PPP shutdown + modem shutdown. */
+            ppp_shutdown();
+            timer_spin_sleep(200);
+
             serial_log("Shutting down modem hardware...");
             modem_shutdown();
 
