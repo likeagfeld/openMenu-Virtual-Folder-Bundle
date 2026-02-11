@@ -16,6 +16,14 @@
 /* Serial coders cable connection state */
 static int serial_connection_active = 0;
 
+#ifdef _arch_dreamcast
+/* DreamPi can take ~23s to fully settle PPP hangup/rules on disconnect.
+ * Track the last PPP disconnect and auto-wait before reconnect attempts so
+ * users don't need to manually count timing between sessions. */
+static uint64_t last_ppp_disconnect_ms = 0;
+static const uint64_t PPP_RECONNECT_COOLDOWN_MS = 23000;
+#endif
+
 /* When non-zero, SCIF is being used (or was used) for serial data.
  * ALL printf() calls must be suppressed because KOS routes printf through
  * SCIF, which would inject debug text into the serial data stream and
@@ -479,6 +487,39 @@ static int try_modem_dialup(void) {
 #endif
 }
 
+#ifdef _arch_dreamcast
+static void dcnow_wait_for_ppp_cooldown_if_needed(void) {
+    if (!last_ppp_disconnect_ms) {
+        return;
+    }
+
+    uint64_t now = timer_ms_gettime64();
+    uint64_t elapsed = now - last_ppp_disconnect_ms;
+    if (elapsed >= PPP_RECONNECT_COOLDOWN_MS) {
+        return;
+    }
+
+    uint64_t remaining = PPP_RECONNECT_COOLDOWN_MS - elapsed;
+    while (remaining > 0) {
+        uint64_t secs = (remaining + 999) / 1000;
+        char msg[96];
+        snprintf(msg, sizeof(msg), "Waiting for DreamPi reset (%llus)...", (unsigned long long)secs);
+        update_status(msg);
+
+        /* Sleep in 1s chunks so status remains responsive. */
+        uint64_t chunk = remaining > 1000 ? 1000 : remaining;
+        timer_spin_sleep((uint32)chunk);
+
+        now = timer_ms_gettime64();
+        elapsed = now - last_ppp_disconnect_ms;
+        if (elapsed >= PPP_RECONNECT_COOLDOWN_MS) {
+            break;
+        }
+        remaining = PPP_RECONNECT_COOLDOWN_MS - elapsed;
+    }
+}
+#endif
+
 int dcnow_net_init_with_method(dcnow_connection_method_t method) {
 #ifdef _arch_dreamcast
     update_status("Initializing network...");
@@ -488,6 +529,10 @@ int dcnow_net_init_with_method(dcnow_connection_method_t method) {
         update_status("Network ready (BBA detected)");
         return 0;  /* BBA already active, we're done */
     }
+
+    /* Auto-wait for DreamPi PPP cleanup after a previous disconnect.
+     * This removes the need for users to manually wait ~23 seconds. */
+    dcnow_wait_for_ppp_cooldown_if_needed();
 
     /* Use the specified connection method */
     if (method == DCNOW_CONN_SERIAL) {
@@ -603,6 +648,9 @@ void dcnow_net_disconnect(void) {
             printf("DC Now: Modem and PPP disconnected\n");
             serial_log("PPP and modem disconnected successfully");
         }
+
+        /* Record disconnect time so next connect can auto-wait for DreamPi. */
+        last_ppp_disconnect_ms = timer_ms_gettime64();
 
         /* Reset network state to NULL so future init knows to reinitialize */
         net_default_dev = NULL;
