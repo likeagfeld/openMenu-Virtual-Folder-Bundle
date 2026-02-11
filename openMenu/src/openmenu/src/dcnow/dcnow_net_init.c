@@ -153,6 +153,8 @@ static int try_serial_coders_cable(void) {
             serial_log("AT handshake pass 1 failed - resetting SCIF for pass 2");
         }
 
+        serial_log(pass == 0 ? "AT handshake pass 1 start" : "AT handshake pass 2 start");
+
         /* Ensure PPP fully releases SCIF before we try to use it.
          * ppp_scif_init() takes ownership of SCIF's receive path. On reconnect,
          * the previous ppp_shutdown() in dcnow_net_disconnect() terminates PPP
@@ -194,10 +196,21 @@ static int try_serial_coders_cable(void) {
         scif_flush();
         timer_spin_sleep(120);
 
+        /* Normalize modem command profile before probing for OK.
+         * After a previous PPP session DreamPi can stay in a state where
+         * result codes are suppressed, so AT commands are accepted but no
+         * visible "OK" is returned. Force verbose result codes on (Q0/V1)
+         * and enable echo once so subsequent AT probing is observable. */
+        scif_write_string("ATE1Q0V1\r\n");
+        scif_flush();
+        timer_spin_sleep(180);
+        while (scif_read() != -1) { /* drain profile response noise */ }
+        timer_spin_sleep(60);
+
         /* Send AT command with retry logic.
          * USB-to-serial adapters (especially FTDI) can have line noise or need
          * time to stabilize after SCIF initialization. Retrying the AT command
-         * up to 3 times significantly improves reliability across cable types. */
+         * across multiple retries significantly improves reliability across cable types. */
         for (at_attempt = 0; at_attempt < AT_MAX_RETRIES; at_attempt++) {
             if (at_attempt > 0) {
                 /* Between retries: drain any garbage and wait for line to settle */
@@ -205,9 +218,9 @@ static int try_serial_coders_cable(void) {
                 snprintf(retry_msg, sizeof(retry_msg), "AT retry %d of %d...", at_attempt + 1, AT_MAX_RETRIES);
                 update_status(retry_msg);
                 serial_log(retry_msg);
-                timer_spin_sleep(400);
+                timer_spin_sleep(300);
                 while (scif_read() != -1) { /* drain buffer */ }
-                timer_spin_sleep(250);
+                timer_spin_sleep(180);
             } else {
                 update_status("Sending AT command...");
             }
