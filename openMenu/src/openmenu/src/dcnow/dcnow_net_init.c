@@ -248,20 +248,18 @@ static int try_serial_coders_cable(void) {
     }
 
     if (!got_ok) {
-        /* All AT retries exhausted - leave SCIF at 115200 for retry */
-        serial_log("All AT retries failed across both handshake passes - no DreamPi detected");
-
-        /* Show status on screen (via callback, printf suppressed) */
-        char status_msg[96];
-        snprintf(status_msg, sizeof(status_msg), "No OK after %d tries x %d passes - got: %.20s",
-                 AT_MAX_RETRIES, HANDSHAKE_PASSES, buf);
-        update_status(status_msg);
-        timer_spin_sleep(2000);
-        return -1;  /* No DreamPi detected on serial */
+        /* Do not hard-fail solely on missing OK.
+         * Some DreamPi/adapter combinations accept ATDT and establish CONNECT
+         * even when AT probing never returns a visible OK. */
+        serial_log("No OK after AT handshake passes - attempting direct dial anyway");
+        update_status("No OK detected - trying direct dial...");
+        timer_spin_sleep(300);
+    } else {
+        serial_log("AT handshake complete, proceeding to dial");
+        update_status("DreamPi found! Dialing...");
     }
 
-    /* DreamPi detected! Send dial command */
-    update_status("DreamPi found! Dialing...");
+    /* Send dial command */
     timer_spin_sleep(100);  /* Small delay before dial */
 
     /* Flush buffer before dial */
