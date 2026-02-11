@@ -163,6 +163,15 @@ static int try_serial_coders_cable(void) {
     /* Small delay after flush */
     timer_spin_sleep(100);
 
+    /* Send an explicit preamble at 115200 before AT detection.
+     * DreamPi's AT handler may ignore standalone AT probes until it sees
+     * normal serial text traffic first. We cannot rely on printf() for this
+     * because printf baud/state can vary between reconnects; write directly
+     * to SCIF after configuring it to 115200 so the preamble is always clean. */
+    scif_write_string("DC Now: serial link check\r\n");
+    scif_flush();
+    timer_spin_sleep(100);
+
     /* Send AT command with retry logic.
      * USB-to-serial adapters (especially FTDI) can have line noise or need
      * time to stabilize after SCIF initialization. Retrying the AT command
