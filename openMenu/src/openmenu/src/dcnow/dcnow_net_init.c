@@ -487,38 +487,23 @@ static int try_modem_dialup(void) {
 #endif
 }
 
+unsigned int dcnow_net_get_ppp_cooldown_remaining_ms(void) {
 #ifdef _arch_dreamcast
-static void dcnow_wait_for_ppp_cooldown_if_needed(void) {
     if (!last_ppp_disconnect_ms) {
-        return;
+        return 0;
     }
 
     uint64_t now = timer_ms_gettime64();
     uint64_t elapsed = now - last_ppp_disconnect_ms;
     if (elapsed >= PPP_RECONNECT_COOLDOWN_MS) {
-        return;
+        return 0;
     }
 
-    uint64_t remaining = PPP_RECONNECT_COOLDOWN_MS - elapsed;
-    while (remaining > 0) {
-        uint64_t secs = (remaining + 999) / 1000;
-        char msg[96];
-        snprintf(msg, sizeof(msg), "Waiting for DreamPi reset (%llus)...", (unsigned long long)secs);
-        update_status(msg);
-
-        /* Sleep in 1s chunks so status remains responsive. */
-        uint64_t chunk = remaining > 1000 ? 1000 : remaining;
-        timer_spin_sleep((uint32)chunk);
-
-        now = timer_ms_gettime64();
-        elapsed = now - last_ppp_disconnect_ms;
-        if (elapsed >= PPP_RECONNECT_COOLDOWN_MS) {
-            break;
-        }
-        remaining = PPP_RECONNECT_COOLDOWN_MS - elapsed;
-    }
-}
+    return (unsigned int)(PPP_RECONNECT_COOLDOWN_MS - elapsed);
+#else
+    return 0;
 #endif
+}
 
 int dcnow_net_init_with_method(dcnow_connection_method_t method) {
 #ifdef _arch_dreamcast
@@ -529,10 +514,6 @@ int dcnow_net_init_with_method(dcnow_connection_method_t method) {
         update_status("Network ready (BBA detected)");
         return 0;  /* BBA already active, we're done */
     }
-
-    /* Auto-wait for DreamPi PPP cleanup after a previous disconnect.
-     * This removes the need for users to manually wait ~23 seconds. */
-    dcnow_wait_for_ppp_cooldown_if_needed();
 
     /* Use the specified connection method */
     if (method == DCNOW_CONN_SERIAL) {
