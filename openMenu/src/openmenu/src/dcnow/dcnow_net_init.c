@@ -22,10 +22,10 @@ static int serial_connection_active = 0;
  * corrupt communication with DreamPi.
  *
  * This flag is set before SCIF baud rate changes on first serial connection
- * and intentionally NEVER cleared back to 0 afterward. After disconnect,
- * SCIF stays at 115200 to match DreamPi's listening rate — restoring to
- * 57600 would cause printf output at the wrong baud rate, filling DreamPi's
- * buffer with garbage and preventing reconnection. */
+ * Cleared back to 0 on disconnect so the "DC Now:" preamble messages are
+ * sent on reconnect. DreamPi requires seeing the preamble before AT to
+ * enter its AT command handler. SCIF stays at 115200 after PPP shutdown,
+ * matching DreamPi's listening rate, so printf output is readable. */
 static int scif_in_use_for_data = 0;
 
 #ifdef _arch_dreamcast
@@ -475,6 +475,7 @@ void dcnow_net_disconnect(void) {
         serial_log("No network device to disconnect");
         if (scif_in_use_for_data) {
             serial_connection_active = 0;
+            scif_in_use_for_data = 0;  /* Re-enable preamble for reconnect */
         }
         return;
     }
@@ -496,7 +497,8 @@ void dcnow_net_disconnect(void) {
              * preventing it from detecting the next "AT" command on reconnect.
              *
              * Instead, leave SCIF at 115200 with IRQs disabled (as PPP left it)
-             * and keep scif_in_use_for_data = 1 to suppress DC Now printf.
+             * but reset scif_in_use_for_data = 0 so preamble messages are sent
+             * on reconnect. DreamPi needs the "DC Now:" preamble to enter AT mode.
              * try_serial_coders_cable() will fully reinitialize SCIF on reconnect. */
             serial_log("Serial PPP disconnected");
 
@@ -507,7 +509,17 @@ void dcnow_net_disconnect(void) {
             while (scif_read() != -1) { /* drain again */ }
 
             serial_connection_active = 0;
-            /* scif_in_use_for_data stays 1 — prevents printf through SCIF */
+
+            /* Re-enable printf through SCIF for reconnection preamble.
+             * SCIF is still at 115200 (PPP's rate), which matches DreamPi's
+             * listening rate, so printf output will be readable.
+             * DreamPi needs to see the "DC Now:" preamble messages BEFORE
+             * the AT command to enter its AT command handler mode. Without
+             * the preamble, DreamPi receives AT but never responds with OK.
+             * This was the root cause of reconnection failures — a DC reboot
+             * worked because scif_in_use_for_data starts at 0 on fresh boot,
+             * so the preamble was sent. Soft reconnect kept it at 1. */
+            scif_in_use_for_data = 0;
 
             serial_log("Serial disconnected, SCIF left at 115200 for reconnect");
         } else {
