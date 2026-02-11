@@ -9,6 +9,7 @@
 #include <ppp/ppp.h>
 #include <dc/modem/modem.h>
 #include <dc/scif.h>
+#include <kos/dbgio.h>
 #include <arch/timer.h>
 #include <dc/pvr.h>
 #endif
@@ -163,6 +164,15 @@ static int try_serial_coders_cable(void) {
      * - FTDI cables failing (more timing-sensitive to mixed data)
      * - Idle disconnects (printf during PPP corrupts data stream) */
     scif_in_use_for_data = 1;
+
+    /* Detach KOS debug I/O from SCIF so that printf() calls inside KOS
+     * libraries (PPP negotiation, PVR errors, modem driver, etc.) can
+     * never reach the serial port.  DCNOW_DPRINTF and update_status()
+     * already guard dcnow's own printf calls, but KOS-internal code
+     * bypasses those guards.  dbgio_disable() makes ALL printf output
+     * a no-op, while direct scif_write() for the AT/PPP protocol and
+     * fprintf()-to-file logging remain unaffected. */
+    dbgio_disable();
 
     /* Run the serial AT handshake in two passes.
      * Some reconnect failures leave stale PPP/SCIF state around long enough
