@@ -50,6 +50,12 @@ void dcnow_set_status_callback(dcnow_status_callback_t callback);
 int dcnow_net_init_with_method(dcnow_connection_method_t method);
 
 /**
+ * Get remaining PPP reconnect cooldown in milliseconds.
+ * Returns 0 when no cooldown is active.
+ */
+unsigned int dcnow_net_get_ppp_cooldown_remaining_ms(void);
+
+/**
  * Initialize network (legacy - tries serial first, then modem)
  * @deprecated Use dcnow_net_init_with_method() instead
  */
