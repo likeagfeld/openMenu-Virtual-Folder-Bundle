@@ -248,16 +248,22 @@ static int try_serial_coders_cable(void) {
     }
 
     if (!got_ok) {
-        /* Do not hard-fail solely on missing OK.
-         * Some DreamPi/adapter combinations accept ATDT and establish CONNECT
-         * even when AT probing never returns a visible OK. */
-        serial_log("No OK after AT handshake passes - attempting direct dial anyway");
-        update_status("No OK detected - trying direct dial...");
-        timer_spin_sleep(300);
-    } else {
-        serial_log("AT handshake complete, proceeding to dial");
-        update_status("DreamPi found! Dialing...");
+        /* DreamPi serial protocol requires an explicit OK response before dial.
+         * If no OK is observed after both handshake passes, fail fast so the
+         * caller can report a clean serial-detection failure and retry later. */
+        serial_log("No OK after AT handshake passes - aborting dial");
+
+        /* Show status on screen (via callback, printf suppressed) */
+        char status_msg[96];
+        snprintf(status_msg, sizeof(status_msg), "No OK after %d tries x %d passes - got: %.20s",
+                 AT_MAX_RETRIES, HANDSHAKE_PASSES, buf);
+        update_status(status_msg);
+        timer_spin_sleep(2000);
+        return -1;  /* No DreamPi detected on serial */
     }
+
+    serial_log("AT handshake complete, proceeding to dial");
+    update_status("DreamPi found! Dialing...");
 
     /* Send dial command */
     timer_spin_sleep(100);  /* Small delay before dial */
