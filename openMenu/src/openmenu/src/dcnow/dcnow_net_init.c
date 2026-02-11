@@ -622,7 +622,7 @@ void dcnow_net_disconnect(void) {
             /* Give modem hardware time to reset */
             timer_spin_sleep(700);
 
-            printf("DC Now: Modem and PPP disconnected\n");
+            DCNOW_DPRINTF("DC Now: Modem and PPP disconnected\n");
             serial_log("PPP and modem disconnected successfully");
         }
 
@@ -634,7 +634,7 @@ void dcnow_net_disconnect(void) {
         serial_log("Network state reset to NULL");
     } else {
         /* BBA doesn't need special disconnect handling */
-        printf("DC Now: Network device is not modem (BBA), no disconnect needed\n");
+        DCNOW_DPRINTF("DC Now: Network device is not modem (BBA), no disconnect needed\n");
     }
 #else
     /* Non-Dreamcast - nothing to do */
