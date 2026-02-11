@@ -72,8 +72,9 @@ void dcnow_set_status_sleep_enabled(bool enabled);
  *
  * It will properly shutdown the PPP connection and modem hardware
  * (if modem was used) with appropriate delays to ensure hardware
- * fully resets. For serial coders cable connections, only PPP is
- * shutdown (no modem hardware involved).
+ * fully resets. For serial coders cable connections, PPP is shutdown
+ * and the SCIF port is properly restored (buffer drain, 57600 baud,
+ * IRQ re-enabled) so debug output and reconnection work correctly.
  *
  * After shutdown, net_default_dev is set to NULL so subsequent
  * calls to dcnow_net_early_init() will properly reinitialize.
@@ -81,5 +82,21 @@ void dcnow_set_status_sleep_enabled(bool enabled);
  * Timing: ~200ms for serial, ~700ms for modem
  */
 void dcnow_net_disconnect(void);
+
+/**
+ * Check if SCIF is currently in use for serial data (AT commands or PPP).
+ * When true, callers must NOT use printf() as it would send debug text
+ * through SCIF and corrupt the serial data stream.
+ *
+ * @return 1 if SCIF is in use for serial data, 0 otherwise
+ */
+int dcnow_is_serial_scif_active(void);
+
+/**
+ * Safe debug printf that suppresses output when SCIF is in use for serial data.
+ * Use this instead of printf() in all DC Now code paths to prevent debug text
+ * from corrupting serial communication with DreamPi.
+ */
+#define DCNOW_DPRINTF(...) do { if (!dcnow_is_serial_scif_active()) printf(__VA_ARGS__); } while(0)
 
 #endif /* DCNOW_NET_INIT_H */

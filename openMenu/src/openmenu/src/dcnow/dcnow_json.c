@@ -1,4 +1,5 @@
 #include "dcnow_json.h"
+#include "dcnow_net_init.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -240,7 +241,7 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
                 memcpy(&idle_player_details[idle_player_count], &player_details, sizeof(player_details));
                 idle_player_count++;
             }
-            printf("DC Now: User %d (%s) is idle/not in game\n", user_count, username);
+            DCNOW_DPRINTF("DC Now: User %d (%s) is idle/not in game\n", user_count, username);
         }
 
         /* Skip to end of user object */
@@ -258,9 +259,9 @@ bool dcnow_json_parse(const char* json_str, json_dcnow_t* result) {
         }
     }
 
-    printf("DC Now: Parsed %d users total - %d with games, %d without games\n",
+    DCNOW_DPRINTF("DC Now: Parsed %d users total - %d with games, %d without games\n",
            user_count, users_with_games, users_without_games);
-    printf("DC Now: Total players from API: %d\n", result->total_players);
+    DCNOW_DPRINTF("DC Now: Total players from API: %d\n", result->total_players);
 
     /* Add idle users as a separate entry if any */
     if (users_without_games > 0 && result->game_count < JSON_MAX_GAMES) {
