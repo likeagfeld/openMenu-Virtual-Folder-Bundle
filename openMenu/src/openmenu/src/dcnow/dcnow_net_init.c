@@ -137,6 +137,18 @@ static int try_serial_coders_cable(void) {
      * - Idle disconnects (printf during PPP corrupts data stream) */
     scif_in_use_for_data = 1;
 
+    /* Ensure PPP fully releases SCIF before we try to use it.
+     * ppp_scif_init() takes ownership of SCIF's receive path. On reconnect,
+     * the previous ppp_shutdown() in dcnow_net_disconnect() terminates PPP
+     * but may not fully deregister its SCIF I/O hooks. DreamPi then sends
+     * "OK" but PPP's lingering receive handler consumes the bytes before
+     * our scif_read() polling can see them. Calling ppp_shutdown() again
+     * is safe (no-op if already shut down) and ensures SCIF is released.
+     * A full DC reboot works because it power-cycles SCIF hardware and
+     * clears all PPP state from memory — this replicates that cleanup. */
+    ppp_shutdown();
+    timer_spin_sleep(200);
+
     /* Initialize SCIF hardware - required before setting parameters */
     scif_init();
     scif_set_irq_usage(0);  /* Disable IRQ mode for polling */
