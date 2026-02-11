@@ -90,7 +90,7 @@ static void update_status(const char* message) {
         status_callback(message);
         /* Give user time to see the message (skipped in async worker mode) */
         if (status_sleep_enabled) {
-            timer_spin_sleep(500);  /* 500ms delay so messages are visible */
+            timer_spin_sleep(700);  /* 500ms delay so messages are visible */
         }
     } else {
         if (!scif_in_use_for_data) {
@@ -122,7 +122,7 @@ static int try_serial_coders_cable(void) {
     char buf[64];
     int bytes_read;
     uint64 start_time;
-    const uint64 TIMEOUT_MS = 2000;  /* 2 second timeout for responses */
+    const uint64 TIMEOUT_MS = 4000;  /* 4 second timeout for responses */
 
     update_status("Checking for serial cable...");
 
@@ -142,7 +142,7 @@ static int try_serial_coders_cable(void) {
      * that DreamPi never answers the first pass. A second full SCIF re-init
      * pass (with extra settle time) recovers without requiring a console reboot. */
     const int HANDSHAKE_PASSES = 2;
-    const int AT_MAX_RETRIES = 3;
+    const int AT_MAX_RETRIES = 5;
     int got_ok = 0;
     int pass;
     int at_attempt;
@@ -188,6 +188,12 @@ static int try_serial_coders_cable(void) {
         scif_flush();
         timer_spin_sleep(100);
 
+        /* Explicit line wakeup: some adapters/hosts only answer AT after
+         * receiving an extra CR/LF boundary post-reset. */
+        scif_write_string("\r\n");
+        scif_flush();
+        timer_spin_sleep(120);
+
         /* Send AT command with retry logic.
          * USB-to-serial adapters (especially FTDI) can have line noise or need
          * time to stabilize after SCIF initialization. Retrying the AT command
@@ -199,18 +205,19 @@ static int try_serial_coders_cable(void) {
                 snprintf(retry_msg, sizeof(retry_msg), "AT retry %d of %d...", at_attempt + 1, AT_MAX_RETRIES);
                 update_status(retry_msg);
                 serial_log(retry_msg);
-                timer_spin_sleep(300);
+                timer_spin_sleep(400);
                 while (scif_read() != -1) { /* drain buffer */ }
-                timer_spin_sleep(200);
+                timer_spin_sleep(250);
             } else {
                 update_status("Sending AT command...");
             }
 
+            /* Keep command simple and deterministic per DreamPi protocol. */
             scif_write_string("AT\r\n");
             scif_flush();  /* Ensure data is transmitted */
 
             /* Wait for DreamPi to process before reading response */
-            timer_spin_sleep(500);
+            timer_spin_sleep(700);
 
             /* Wait for OK response with timeout */
             memset(buf, 0, sizeof(buf));
@@ -241,8 +248,8 @@ static int try_serial_coders_cable(void) {
 
             /* Log what we got on this attempt */
             char log_msg[96];
-            snprintf(log_msg, sizeof(log_msg), "AT pass %d attempt %d: no OK - got %d bytes: %.20s",
-                     pass + 1, at_attempt + 1, bytes_read, buf);
+            snprintf(log_msg, sizeof(log_msg), "AT pass %d attempt %d/%d: no OK in %llums - got %d bytes: %.20s",
+                     pass + 1, at_attempt + 1, AT_MAX_RETRIES, (unsigned long long)TIMEOUT_MS, bytes_read, buf);
             serial_log(log_msg);
         }
     }
@@ -534,7 +541,7 @@ void dcnow_net_disconnect(void) {
             serial_log("Serial PPP disconnected");
 
             /* Drain any leftover PPP data from SCIF buffers */
-            timer_spin_sleep(500);
+            timer_spin_sleep(700);
             while (scif_read() != -1) { /* drain buffer */ }
             timer_spin_sleep(200);
             while (scif_read() != -1) { /* drain again */ }
@@ -559,7 +566,7 @@ void dcnow_net_disconnect(void) {
             modem_shutdown();
 
             /* Give modem hardware time to reset */
-            timer_spin_sleep(500);
+            timer_spin_sleep(700);
 
             printf("DC Now: Modem and PPP disconnected\n");
             serial_log("PPP and modem disconnected successfully");
