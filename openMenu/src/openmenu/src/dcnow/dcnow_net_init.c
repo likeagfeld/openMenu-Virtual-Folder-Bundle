@@ -137,106 +137,124 @@ static int try_serial_coders_cable(void) {
      * - Idle disconnects (printf during PPP corrupts data stream) */
     scif_in_use_for_data = 1;
 
-    /* Ensure PPP fully releases SCIF before we try to use it.
-     * ppp_scif_init() takes ownership of SCIF's receive path. On reconnect,
-     * the previous ppp_shutdown() in dcnow_net_disconnect() terminates PPP
-     * but may not fully deregister its SCIF I/O hooks. DreamPi then sends
-     * "OK" but PPP's lingering receive handler consumes the bytes before
-     * our scif_read() polling can see them. Calling ppp_shutdown() again
-     * is safe (no-op if already shut down) and ensures SCIF is released.
-     * A full DC reboot works because it power-cycles SCIF hardware and
-     * clears all PPP state from memory — this replicates that cleanup. */
-    ppp_shutdown();
-    timer_spin_sleep(200);
-
-    /* Initialize SCIF hardware - required before setting parameters */
-    scif_init();
-    scif_set_irq_usage(0);  /* Disable IRQ mode for polling */
-    scif_set_parameters(115200, 1);  /* 115200 baud, FIFO enabled */
-
-    /* Flush any pending data - extra thorough drain */
-    timer_spin_sleep(200);
-    while (scif_read() != -1) { /* drain buffer */ }
-    timer_spin_sleep(100);
-    while (scif_read() != -1) { /* drain again after settling */ }
-
-    /* Small delay after flush */
-    timer_spin_sleep(100);
-
-    /* Send an explicit preamble at 115200 before AT detection.
-     * DreamPi's AT handler may ignore standalone AT probes until it sees
-     * normal serial text traffic first. We cannot rely on printf() for this
-     * because printf baud/state can vary between reconnects; write directly
-     * to SCIF after configuring it to 115200 so the preamble is always clean. */
-    scif_write_string("DC Now: serial link check\r\n");
-    scif_flush();
-    timer_spin_sleep(100);
-
-    /* Send AT command with retry logic.
-     * USB-to-serial adapters (especially FTDI) can have line noise or need
-     * time to stabilize after SCIF initialization. Retrying the AT command
-     * up to 3 times significantly improves reliability across cable types. */
+    /* Run the serial AT handshake in two passes.
+     * Some reconnect failures leave stale PPP/SCIF state around long enough
+     * that DreamPi never answers the first pass. A second full SCIF re-init
+     * pass (with extra settle time) recovers without requiring a console reboot. */
+    const int HANDSHAKE_PASSES = 2;
     const int AT_MAX_RETRIES = 3;
-    int at_attempt;
     int got_ok = 0;
+    int pass;
+    int at_attempt;
 
-    for (at_attempt = 0; at_attempt < AT_MAX_RETRIES; at_attempt++) {
-        if (at_attempt > 0) {
-            /* Between retries: drain any garbage and wait for line to settle */
-            char retry_msg[48];
-            snprintf(retry_msg, sizeof(retry_msg), "AT retry %d of %d...", at_attempt + 1, AT_MAX_RETRIES);
-            update_status(retry_msg);
-            serial_log(retry_msg);
-            timer_spin_sleep(300);
-            while (scif_read() != -1) { /* drain buffer */ }
-            timer_spin_sleep(200);
-        } else {
-            update_status("Sending AT command...");
+    for (pass = 0; pass < HANDSHAKE_PASSES && !got_ok; pass++) {
+        if (pass > 0) {
+            update_status("No OK - resetting serial and retrying...");
+            serial_log("AT handshake pass 1 failed - resetting SCIF for pass 2");
         }
 
-        scif_write_string("AT\r\n");
-        scif_flush();  /* Ensure data is transmitted */
+        /* Ensure PPP fully releases SCIF before we try to use it.
+         * ppp_scif_init() takes ownership of SCIF's receive path. On reconnect,
+         * the previous ppp_shutdown() in dcnow_net_disconnect() terminates PPP
+         * but may not fully deregister its SCIF I/O hooks. DreamPi then sends
+         * "OK" but PPP's lingering receive handler consumes the bytes before
+         * our scif_read() polling can see them. Calling ppp_shutdown() again
+         * is safe (no-op if already shut down) and ensures SCIF is released.
+         * A full DC reboot works because it power-cycles SCIF hardware and
+         * clears all PPP state from memory — this replicates that cleanup. */
+        ppp_shutdown();
+        timer_spin_sleep(pass == 0 ? 200 : 800);
 
-        /* Wait for DreamPi to process before reading response */
-        timer_spin_sleep(500);
+        /* Initialize SCIF hardware - required before setting parameters */
+        scif_init();
+        scif_set_irq_usage(0);  /* Disable IRQ mode for polling */
+        scif_set_parameters(115200, 1);  /* 115200 baud, FIFO enabled */
 
-        /* Wait for OK response with timeout */
-        memset(buf, 0, sizeof(buf));
-        bytes_read = 0;
-        start_time = timer_ms_gettime64();
+        /* Flush any pending data - extra thorough drain */
+        timer_spin_sleep(200);
+        while (scif_read() != -1) { /* drain buffer */ }
+        timer_spin_sleep(100);
+        while (scif_read() != -1) { /* drain again after settling */ }
 
-        while ((timer_ms_gettime64() - start_time) < TIMEOUT_MS) {
-            int c = scif_read();
-            if (c != -1 && bytes_read < (int)sizeof(buf) - 1) {
-                buf[bytes_read++] = (char)c;
-                buf[bytes_read] = '\0';
+        /* Small delay after flush */
+        timer_spin_sleep(100);
 
-                /* Check for OK response */
-                if (strstr(buf, "OK") != NULL) {
-                    serial_log("Serial - Got OK response from DreamPi");
-                    got_ok = 1;
-                    break;
-                }
+        /* Send an explicit preamble at 115200 before AT detection.
+         * DreamPi's AT handler may ignore standalone AT probes until it sees
+         * normal serial text traffic first. We cannot rely on printf() for this
+         * because printf baud/state can vary between reconnects; write directly
+         * to SCIF after configuring it to 115200 so the preamble is always clean. */
+        scif_write_string("DC Now: serial link check\r\n");
+        scif_flush();
+        timer_spin_sleep(100);
+
+        /* Send AT command with retry logic.
+         * USB-to-serial adapters (especially FTDI) can have line noise or need
+         * time to stabilize after SCIF initialization. Retrying the AT command
+         * up to 3 times significantly improves reliability across cable types. */
+        for (at_attempt = 0; at_attempt < AT_MAX_RETRIES; at_attempt++) {
+            if (at_attempt > 0) {
+                /* Between retries: drain any garbage and wait for line to settle */
+                char retry_msg[48];
+                snprintf(retry_msg, sizeof(retry_msg), "AT retry %d of %d...", at_attempt + 1, AT_MAX_RETRIES);
+                update_status(retry_msg);
+                serial_log(retry_msg);
+                timer_spin_sleep(300);
+                while (scif_read() != -1) { /* drain buffer */ }
+                timer_spin_sleep(200);
+            } else {
+                update_status("Sending AT command...");
             }
-            timer_spin_sleep(10);  /* Small delay to avoid busy loop */
+
+            scif_write_string("AT\r\n");
+            scif_flush();  /* Ensure data is transmitted */
+
+            /* Wait for DreamPi to process before reading response */
+            timer_spin_sleep(500);
+
+            /* Wait for OK response with timeout */
+            memset(buf, 0, sizeof(buf));
+            bytes_read = 0;
+            start_time = timer_ms_gettime64();
+
+            while ((timer_ms_gettime64() - start_time) < TIMEOUT_MS) {
+                int c = scif_read();
+                if (c != -1 && bytes_read < (int)sizeof(buf) - 1) {
+                    buf[bytes_read++] = (char)c;
+                    buf[bytes_read] = '\0';
+
+                    /* Check for OK response */
+                    if (strstr(buf, "OK") != NULL) {
+                        if (pass > 0) {
+                            serial_log("Serial - Got OK response from DreamPi on pass 2");
+                        } else {
+                            serial_log("Serial - Got OK response from DreamPi");
+                        }
+                        got_ok = 1;
+                        break;
+                    }
+                }
+                timer_spin_sleep(10);  /* Small delay to avoid busy loop */
+            }
+
+            if (got_ok) break;
+
+            /* Log what we got on this attempt */
+            char log_msg[96];
+            snprintf(log_msg, sizeof(log_msg), "AT pass %d attempt %d: no OK - got %d bytes: %.20s",
+                     pass + 1, at_attempt + 1, bytes_read, buf);
+            serial_log(log_msg);
         }
-
-        if (got_ok) break;
-
-        /* Log what we got on this attempt */
-        char log_msg[96];
-        snprintf(log_msg, sizeof(log_msg), "AT attempt %d: no OK - got %d bytes: %.20s",
-                 at_attempt + 1, bytes_read, buf);
-        serial_log(log_msg);
     }
 
     if (!got_ok) {
         /* All AT retries exhausted - leave SCIF at 115200 for retry */
-        serial_log("All AT retries failed - no DreamPi detected");
+        serial_log("All AT retries failed across both handshake passes - no DreamPi detected");
 
         /* Show status on screen (via callback, printf suppressed) */
-        char status_msg[80];
-        snprintf(status_msg, sizeof(status_msg), "No OK after %d tries - got: %.20s", AT_MAX_RETRIES, buf);
+        char status_msg[96];
+        snprintf(status_msg, sizeof(status_msg), "No OK after %d tries x %d passes - got: %.20s",
+                 AT_MAX_RETRIES, HANDSHAKE_PASSES, buf);
         update_status(status_msg);
         timer_spin_sleep(2000);
         return -1;  /* No DreamPi detected on serial */
