@@ -151,6 +151,16 @@ static int try_serial_coders_cable(void) {
     /* Small delay after flush */
     timer_spin_sleep(100);
 
+    /* Send identification string directly via SCIF (not printf) so DreamPi's
+     * dcnow handler activates. On first connect, printf-based DCNOW_DPRINTF
+     * and update_status send "DC Now: ..." text before AT, which DreamPi uses
+     * to detect a DC Now connection. On reconnect, scif_in_use_for_data = 1
+     * suppresses all printf, so DreamPi never sees the trigger and its AT
+     * responder stays dormant. Writing directly to SCIF bypasses the flag. */
+    scif_write_string("DC Now: Starting connection...\r\n");
+    scif_flush();
+    timer_spin_sleep(500);  /* Give DreamPi time to detect and activate handler */
+
     /* Send AT command with retry logic.
      * USB-to-serial adapters (especially FTDI) can have line noise or need
      * time to stabilize after SCIF initialization. Retrying the AT command
