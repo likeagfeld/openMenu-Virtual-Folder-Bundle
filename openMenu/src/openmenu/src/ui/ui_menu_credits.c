@@ -146,7 +146,7 @@ static const char* clock_choice_text[] = {"On (12-Hour)", "On (24-Hour)", "Off"}
 static const char* vm2_send_all_choice_text[] = {"Send to All", "Send to First", "Off"};
 static const char* boot_mode_choice_text[] = {"Full Boot", "License Only", "Animation Only", "Fast Boot"};
 static const char* dcnow_vmu_choice_text[] = {"On", "Off"};
-static const char* deflicker_disable_choice_text[] = {"On", "Off"};
+static const char* deflicker_disable_choice_text[] = {"On", "Light", "Medium", "Strong", "Off"};
 static const char* save_choice_text[] = {"Save/Load", "Apply"};
 static const char* credits_text[] = {"Credits"};
 

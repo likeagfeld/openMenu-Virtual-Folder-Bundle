@@ -16,6 +16,26 @@ extern int vm2_device_count;
 extern void vm2_rescan(void);
 extern void vm2_send_id_to_all(const char* product, const char* name);
 
+/* Apply deflicker/blur filter disable based on setting strength.
+ * Writes to PVR Y scaler filter register (0xA05F8118) to adjust the
+ * vertical blur filter mixing weights. Register format: 0x0000xxyy
+ * where xx = center line weight, yy = adjacent line weight.
+ * Formula: xx + yy*2 = 256 for proper brightness.
+ * Based on TapamN's Universal Deflicker/Blur Disable Code. */
+static void
+apply_deflicker_setting(void) {
+    static const uint32_t deflicker_values[] = {
+        0x0000A030,  /* Light:  18.75% + 62.50% + 18.75% */
+        0x0000C020,  /* Medium: 12.50% + 75.00% + 12.50% */
+        0x0000D010,  /* Strong:  6.25% + 81.25% +  6.25% */
+        0x0000FF00,  /* Full:    0.00% + 99.60% +  0.00% */
+    };
+    uint8_t level = sf_deflicker_disable[0];
+    if (level >= DEFLICKER_DISABLE_LIGHT && level <= DEFLICKER_DISABLE_FULL) {
+        *((volatile uint32_t*)0xA05F8118) = deflicker_values[level - DEFLICKER_DISABLE_LIGHT];
+    }
+}
+
 /* BLOOM.BIN availability flag - checked once at startup */
 static int bloom_available = 0;
 
@@ -84,10 +104,7 @@ bloom_launch(gd_item* disc) {
     /* Patch */
     ((uint16_t*)0xAC000198)[0] = 0xFF86;
 
-    /* Disable deflicker/blur filter if setting is enabled */
-    if (sf_deflicker_disable[0] == DEFLICKER_DISABLE_ON) {
-        *((volatile uint32_t*)0xA05F8118) = 0x0000FF00;
-    }
+    apply_deflicker_setting();
 
     arch_exec(bloom_buf, bloom_size);
 }
@@ -132,10 +149,7 @@ bleem_launch(gd_item* disc) {
 
     bleem_buf[0x1CA70] = 1;
 
-    /* Disable deflicker/blur filter if setting is enabled */
-    if (sf_deflicker_disable[0] == DEFLICKER_DISABLE_ON) {
-        *((volatile uint32_t*)0xA05F8118) = 0x0000FF00;
-    }
+    apply_deflicker_setting();
 
     arch_exec(bleem_buf, bleem_size);
 }
@@ -224,14 +238,7 @@ dreamcast_launch_disc(gd_item* disc) {
 
     memcpy((void*)0xACCFFF00, &param, 32);
 
-    /* Disable deflicker/blur filter if setting is enabled.
-     * Writes to PVR Y scaler filter register (0xA05F8118) to set
-     * center line weight to ~99.6% and adjacent lines to 0%,
-     * effectively disabling the vertical blur filter.
-     * Based on TapamN's Universal Deflicker/Blur Disable Code. */
-    if (sf_deflicker_disable[0] == DEFLICKER_DISABLE_ON) {
-        *((volatile uint32_t*)0xA05F8118) = 0x0000FF00;
-    }
+    apply_deflicker_setting();
 
     arch_exec(gdmenu_loader, gdmenu_loader_length);
 }
@@ -356,10 +363,7 @@ dreamcast_launch_cb(gd_item* disc) {
         memcpy((void*)0xACE10000, cb_loader_data, cb_loader_size);
     }
 
-    /* Disable deflicker/blur filter if setting is enabled */
-    if (sf_deflicker_disable[0] == DEFLICKER_DISABLE_ON) {
-        *((volatile uint32_t*)0xA05F8118) = 0x0000FF00;
-    }
+    apply_deflicker_setting();
 
     arch_exec(cb_buf, cb_size);
 }
