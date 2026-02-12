@@ -87,6 +87,10 @@ extern uint8_t* sf_dcnow_vmu;
 #define sf_dcnow_vmu_type   CRAYON_TYPE_UINT8
 #define sf_dcnow_vmu_length 1
 
+extern uint8_t* sf_deflicker_disable;
+#define sf_deflicker_disable_type   CRAYON_TYPE_UINT8
+#define sf_deflicker_disable_length 1
+
 enum savefile_version {
     SFV_INITIAL = 1,
     SFV_BIOS_3D,
@@ -101,6 +105,7 @@ enum savefile_version {
     SFV_VM2_SEND_ALL,
     SFV_BOOT_MODE,
     SFV_DCNOW_VMU,
+    SFV_DEFLICKER_DISABLE,
     SFV_LATEST_PLUS_ONE //DON'T REMOVE
 };
 
@@ -276,6 +281,13 @@ typedef enum CFG_DCNOW_VMU {
     DCNOW_VMU_OFF,
     DCNOW_VMU_END = DCNOW_VMU_OFF
 } CFG_DCNOW_VMU;
+
+typedef enum CFG_DEFLICKER_DISABLE {
+    DEFLICKER_DISABLE_START = 0,
+    DEFLICKER_DISABLE_OFF = DEFLICKER_DISABLE_START,
+    DEFLICKER_DISABLE_ON,
+    DEFLICKER_DISABLE_END = DEFLICKER_DISABLE_ON
+} CFG_DEFLICKER_DISABLE;
 
 typedef CFG_REGION region;
 

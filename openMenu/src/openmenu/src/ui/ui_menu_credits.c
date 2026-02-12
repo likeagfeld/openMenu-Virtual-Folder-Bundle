@@ -120,7 +120,7 @@ typedef enum CB_OPTION {
 
 #pragma region Settings_Menu
 
-static const char* menu_choice_text[] = {"Style", "Theme", "Aspect", "Beep", "Exit to 3D BIOS", "Sort", "Filter", "Multi-Disc", "Multi-Disc Grouping", "Artwork", "Display Index Numbers", "Disc Details", "Artwork", "Item Details", "Clock", "Marquee Speed", "VMU Game ID", "Boot Mode", "DC NOW! VMU"};
+static const char* menu_choice_text[] = {"Style", "Theme", "Aspect", "Beep", "Exit to 3D BIOS", "Sort", "Filter", "Multi-Disc", "Multi-Disc Grouping", "Artwork", "Display Index Numbers", "Disc Details", "Artwork", "Item Details", "Clock", "Marquee Speed", "VMU Game ID", "Boot Mode", "DC NOW! VMU", "Deflicker Filter"};
 static const char* theme_choice_text[] = {"LineDesc", "Grid3", "Scroll", "Folders"};
 static const char* region_choice_text[] = {"NTSC-U", "NTSC-J", "PAL"};
 static const char* region_choice_text_scroll[] = {"GDMENU"};
@@ -146,6 +146,7 @@ static const char* clock_choice_text[] = {"On (12-Hour)", "On (24-Hour)", "Off"}
 static const char* vm2_send_all_choice_text[] = {"Send to All", "Send to First", "Off"};
 static const char* boot_mode_choice_text[] = {"Full Boot", "License Only", "Animation Only", "Fast Boot"};
 static const char* dcnow_vmu_choice_text[] = {"On", "Off"};
+static const char* deflicker_disable_choice_text[] = {"On", "Off"};
 static const char* save_choice_text[] = {"Save/Load", "Apply"};
 static const char* credits_text[] = {"Credits"};
 
@@ -179,6 +180,7 @@ static int REGION_CHOICES = (sizeof(region_choice_text) / sizeof(region_choice_t
 #define VM2_SEND_ALL_CHOICES (sizeof(vm2_send_all_choice_text) / sizeof(vm2_send_all_choice_text)[0])
 #define BOOT_MODE_CHOICES (sizeof(boot_mode_choice_text) / sizeof(boot_mode_choice_text)[0])
 #define DCNOW_VMU_CHOICES (sizeof(dcnow_vmu_choice_text) / sizeof(dcnow_vmu_choice_text)[0])
+#define DEFLICKER_DISABLE_CHOICES (sizeof(deflicker_disable_choice_text) / sizeof(deflicker_disable_choice_text)[0])
 
 typedef enum MENU_CHOICE {
     CHOICE_START,
@@ -201,6 +203,7 @@ typedef enum MENU_CHOICE {
     CHOICE_VM2_SEND_ALL,
     CHOICE_BOOT_MODE,
     CHOICE_DCNOW_VMU,
+    CHOICE_DEFLICKER_DISABLE,
     CHOICE_SAVE,
     CHOICE_DCNOW,
     CHOICE_CREDITS,
@@ -212,13 +215,13 @@ typedef enum MENU_CHOICE {
 static int choices[MENU_CHOICES + 1];
 static int choices_max[MENU_CHOICES + 1] = {
     THEME_CHOICES,     3, ASPECT_CHOICES, BEEP_CHOICES, BIOS_3D_CHOICES, SORT_CHOICES, FILTER_CHOICES,
-    MULTIDISC_CHOICES, MULTIDISC_GROUPING_CHOICES, SCROLL_ART_CHOICES, SCROLL_INDEX_CHOICES, DISC_DETAILS_CHOICES, FOLDERS_ART_CHOICES, FOLDERS_ITEM_DETAILS_CHOICES, CLOCK_CHOICES, MARQUEE_SPEED_CHOICES, VM2_SEND_ALL_CHOICES, BOOT_MODE_CHOICES, DCNOW_VMU_CHOICES, 2 /* Apply/Save */};
+    MULTIDISC_CHOICES, MULTIDISC_GROUPING_CHOICES, SCROLL_ART_CHOICES, SCROLL_INDEX_CHOICES, DISC_DETAILS_CHOICES, FOLDERS_ART_CHOICES, FOLDERS_ITEM_DETAILS_CHOICES, CLOCK_CHOICES, MARQUEE_SPEED_CHOICES, VM2_SEND_ALL_CHOICES, BOOT_MODE_CHOICES, DCNOW_VMU_CHOICES, DEFLICKER_DISABLE_CHOICES, 2 /* Apply/Save */};
 static const char** menu_choice_array[MENU_CHOICES] = {theme_choice_text,       region_choice_text,   aspect_choice_text,
                                                        beep_choice_text,        bios_3d_choice_text,  sort_choice_text,
                                                        filter_choice_text,      multidisc_choice_text, multidisc_grouping_choice_text,
                                                        scroll_art_choice_text,  scroll_index_choice_text, disc_details_choice_text,
                                                        folders_art_choice_text, folders_item_details_choice_text, clock_choice_text, marquee_speed_choice_text, vm2_send_all_choice_text,
-                                                       boot_mode_choice_text, dcnow_vmu_choice_text};
+                                                       boot_mode_choice_text, dcnow_vmu_choice_text, deflicker_disable_choice_text};
 static int current_choice = CHOICE_START;
 static int* input_timeout_ptr = NULL;
 
@@ -319,6 +322,7 @@ menu_setup(enum draw_state* state, theme_color* _colors, int* timeout_ptr, uint3
     choices[CHOICE_VM2_SEND_ALL] = sf_vm2_send_all[0];
     choices[CHOICE_BOOT_MODE] = sf_boot_mode[0];
     choices[CHOICE_DCNOW_VMU] = sf_dcnow_vmu[0];
+    choices[CHOICE_DEFLICKER_DISABLE] = sf_deflicker_disable[0];
 
     if (choices[CHOICE_THEME] != UI_SCROLL && choices[CHOICE_THEME] != UI_FOLDERS) {
         menu_choice_array[CHOICE_REGION] = region_choice_text;
@@ -446,6 +450,7 @@ menu_accept(void) {
         sf_vm2_send_all[0] = choices[CHOICE_VM2_SEND_ALL];
         sf_boot_mode[0] = choices[CHOICE_BOOT_MODE];
         sf_dcnow_vmu[0] = choices[CHOICE_DCNOW_VMU];
+        sf_deflicker_disable[0] = choices[CHOICE_DEFLICKER_DISABLE];
 
         /* Immediately apply DC Now VMU setting change */
         if (sf_dcnow_vmu[0] == DCNOW_VMU_OFF) {
@@ -1186,8 +1191,8 @@ draw_menu_tr(void) {
         /* Menu size and placement (many options not shown in LineDesc/Grid3) */
         const int line_height = 32;
         const int width = 400;
-        /* Exclude: BEEP, SCROLL_ART, SCROLL_INDEX, DISC_DETAILS, FOLDERS_ART, FOLDERS_ITEM_DETAILS, MARQUEE_SPEED, CLOCK, MULTIDISC_GROUPING (9 items, -1 for padding) */
-        int visible_options = MENU_OPTIONS - 8;
+        /* Exclude: BEEP, SCROLL_ART, SCROLL_INDEX, DISC_DETAILS, FOLDERS_ART, FOLDERS_ITEM_DETAILS, MARQUEE_SPEED, CLOCK, MULTIDISC_GROUPING (9 items) */
+        int visible_options = MENU_OPTIONS - 9;
         /* Dynamically hide VM2_SEND_ALL when no VM2 devices detected */
         if (vm2_device_count == 0) {
             visible_options -= 1;

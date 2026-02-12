@@ -21,6 +21,7 @@ uint8_t* sf_clock;
 uint8_t* sf_vm2_send_all;
 uint8_t* sf_boot_mode;
 uint8_t* sf_dcnow_vmu;
+uint8_t* sf_deflicker_disable;
 
 void
 settings_sanitize() {
@@ -110,5 +111,9 @@ settings_sanitize() {
 
     if ((sf_dcnow_vmu[0] < DCNOW_VMU_START) || (sf_dcnow_vmu[0] > DCNOW_VMU_END)) {
         sf_dcnow_vmu[0] = DCNOW_VMU_ON;
+    }
+
+    if ((sf_deflicker_disable[0] < DEFLICKER_DISABLE_START) || (sf_deflicker_disable[0] > DEFLICKER_DISABLE_END)) {
+        sf_deflicker_disable[0] = DEFLICKER_DISABLE_OFF;
     }
 }
