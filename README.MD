@@ -35,6 +35,22 @@ SPECIAL THANKS TO KAZADE FOR THEIR AMAZING DREAMCAST NOW! IMPLEMENTATION FOR WHI
 
 Additional thanks to Julian for their support in feature development and QA
 
+# Deflicker Filter Feature Status
+🆕 NEW FEATURE: Control the Dreamcast PVR's vertical blur filter when launching games!
+
+What it does:
+
+Adds a "Deflicker Filter" setting (On/Off) to the Start Button -> Settings Menu that controls the Dreamcast PVR's vertical blur filter when launching games from openMenu (not the openMenu UI itself).
+
+"Off" (default) : Writes 0x0000FF00 to PVR register 0xA05F8118 before game execution, disabling vertical blur for a sharper image on LCD/modern displays
+"On": Standard Dreamcast behavior - deflicker filter active (25% top + 50% center + 25% bottom line blending)
+
+Strength Options (Center/Adjacent/Register Value):
+ - Standard: (On)	50%	25% each	0x00008040 (default, no write)
+ - Light:	62.5%	18.75% each	0x0000A030
+ - Medium:	75%	12.5% each	0x0000C020
+ - Strong:	81.25%	6.25% each	0x0000D010
+ - Full: (Off)	99.6%	0% each	0x0000FF00
 
 
 # openMenu Virtual Folder Bundle
