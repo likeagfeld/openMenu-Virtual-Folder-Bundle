@@ -17,10 +17,18 @@ extern void vm2_rescan(void);
 extern void vm2_send_id_to_all(const char* product, const char* name);
 
 /* Apply deflicker/blur filter disable based on setting strength.
- * Writes to PVR Y scaler filter register (0xA05F8118) to adjust the
- * vertical blur filter mixing weights. Register format: 0x0000xxyy
- * where xx = center line weight, yy = adjacent line weight.
- * Formula: xx + yy*2 = 256 for proper brightness.
+ * Patches the BIOS syscall handler's PVR init code in RAM so the game
+ * receives our deflicker coefficient instead of the default 0x00008040
+ * (25%+50%+25% vertical blur) when it initializes video through the BIOS.
+ * This follows the same BIOS-patching pattern used by VGA forcing and
+ * region-free -- the loader and game call into the BIOS at 0x8C000000,
+ * which has already been patched in RAM before arch_exec().
+ *
+ * KOS equivalent: pvr_init() calls PVR_SET(PVR_UNK_0118, 0x00008040).
+ * vid_set_mode_ex() does NOT touch this register, so patching the init
+ * constant is sufficient -- the value persists across mode changes.
+ *
+ * Register format: 0x0000xxyy  (xx = center weight, yy = adjacent weight)
  * Based on TapamN's Universal Deflicker/Blur Disable Code. */
 static void
 apply_deflicker_setting(void) {
@@ -31,9 +39,27 @@ apply_deflicker_setting(void) {
         0x0000FF00,  /* Full:    0.00% + 99.60% +  0.00% */
     };
     uint8_t level = sf_deflicker_disable[0];
-    if (level >= DEFLICKER_DISABLE_LIGHT && level <= DEFLICKER_DISABLE_FULL) {
-        *((volatile uint32_t*)0xA05F8118) = deflicker_values[level - DEFLICKER_DISABLE_LIGHT];
+    if (level < DEFLICKER_DISABLE_LIGHT || level > DEFLICKER_DISABLE_FULL)
+        return;
+
+    uint32_t new_val = deflicker_values[level - DEFLICKER_DISABLE_LIGHT];
+
+    /* Patch the BIOS syscall handler in RAM (uncached mirror at 0xAC000000).
+     * The BIOS PVR init stores the default scaler coefficient 0x00008040 as
+     * a literal-pool constant.  We scan the first 16 KB of the handler and
+     * replace every occurrence so the game's PVR init writes our value.
+     * The same technique is used for the existing BIOS patches at
+     * 0xAC0000E4 and 0xAC000E20. */
+    volatile uint32_t* bios = (volatile uint32_t*)0xAC000000;
+    for (int i = 0; i < 0x4000 / 4; i++) {
+        if (bios[i] == 0x00008040) {
+            bios[i] = new_val;
+        }
     }
+
+    /* Also write directly to the PVR register for immediate effect
+     * (covers emulator paths where the BIOS PVR init may not run). */
+    *((volatile uint32_t*)0xA05F8118) = new_val;
 }
 
 /* BLOOM.BIN availability flag - checked once at startup */
